@@ -9,6 +9,8 @@ extends Node2D
 ##   --input=FIELD:FIRST-LAST   scripted input for frames FIRST..LAST (as tools/replay.gd)
 ##   --seedlog=PATH             random seeds from a MAME run (as tools/replay.gd), so
 ##                              screenshots can be compared pixel for pixel
+##   --no-sound                 run without the sound board
+##   --record-audio=PATH        record the audio output to a WAV file (saved on quit)
 ##   --shot=PATH --shot-frame=N[,N...]  save a screenshot after each of those frame
 ##                              counts (PATH may contain %d) and quit after the last
 
@@ -25,8 +27,12 @@ var scripted: Array = []
 var shot_path := ""
 var shot_frames: Array[int] = []
 var _time := 0.0
+var _sound_task := -1
+var _record: AudioEffectRecord
+var _record_path := ""
 
 @onready var video: NeoGeoVideo = $Video
+@onready var sound: SoundBoard = $Sound
 
 
 func _ready() -> void:
@@ -44,9 +50,20 @@ func _ready() -> void:
 			var span := parts[1].split("-")
 			scripted.append([parts[0], int(span[0]), int(span[1])])
 	var seedlog := ""
+	var use_sound := true
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--seedlog="):
 			seedlog = arg.trim_prefix("--seedlog=")
+		elif arg == "--no-sound":
+			use_sound = false
+		elif arg.begins_with("--record-audio="):
+			_record_path = arg.trim_prefix("--record-audio=")
+	if not use_sound or not sound.load_roms(MachineLoader.repo_dir().path_join("neodrift")):
+		sound = null
+	if _record_path != "":
+		_record = AudioEffectRecord.new()
+		AudioServer.add_bus_effect(0, _record)
+		_record.set_recording_active(true)
 	machine = MachineLoader.create()
 	if machine == null or MachineLoader.load_snapshot(machine, snapshot) != OK:
 		push_error("Could not start: need the generated program and %s" % snapshot)
@@ -88,6 +105,7 @@ func _process(delta: float) -> void:
 			var path := shot_path % frame if "%d" in shot_path else shot_path
 			get_viewport().get_texture().get_image().save_png(path)
 			if done:
+				_save_recording()
 				get_tree().quit()
 			else:
 				set_process(true)
@@ -121,10 +139,21 @@ func _step() -> void:
 				coin |= 1
 			else:
 				p1 |= P1_BITS[entry[0]]
+	if sound != null:
+		# The sound CPU ran alongside the previous frame on a worker thread.
+		if _sound_task >= 0:
+			WorkerThreadPool.wait_for_task_completion(_sound_task)
+		sound.apply_events()
+		machine.sound_reply = sound.reply
 	machine.input_p1 = p1
 	machine.input_start = start
 	machine.input_coin = coin
 	machine.run_frame()
+	if sound != null:
+		for value: int in machine.sound_log:
+			sound.command(value)
+		_sound_task = WorkerThreadPool.add_task(sound.run_frame)
+	machine.sound_log.clear()
 	frame += 1
 	if machine.halted:
 		_report_halt()
@@ -142,3 +171,12 @@ func _report_halt() -> void:
 		seeds = FileAccess.open(path, FileAccess.WRITE)
 	seeds.seek_end()
 	seeds.store_line("%06X" % machine.missing_block)
+
+
+func _save_recording() -> void:
+	if _record == null:
+		return
+	_record.set_recording_active(false)
+	var recording := _record.get_recording()
+	if recording != null:
+		recording.save_to_wav(_record_path)

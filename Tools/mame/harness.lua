@@ -23,6 +23,9 @@
 --            leaves its vblank wait, as (frame, seed) records in seedlog.bin.
 --            The game steps the seed while it waits, so replays need the value
 --            it actually had when the frame's logic started.
+--   ymlog = {first, last}     optional: sound chip register writes and sound
+--            commands to ymlog.txt, as "frame port register value" (port A/B)
+--            and "frame cmd value"
 --   trace  = { first, last, { {name, addr, size}, ... } }  optional per-frame RAM trace (CSV)
 --
 -- Video RAM is not readable without side effects, so it is shadowed here by
@@ -175,6 +178,27 @@ local function install_seedlog()
     end)
 end
 
+local ym_file
+local ym_frame = 0
+local ym_address = { [4] = 0, [6] = 0 }
+local function install_ymlog()
+  ym_file = assert(io.open(job.out .. "/ymlog.txt", "w"))
+  local io_space = machine.devices[":audiocpu"].spaces["io"]
+  taps[#taps + 1] = io_space:install_write_tap(0x00, 0xffff, "ymlog", function(offset, data, mask)
+    local port = offset & 0xff
+    if port == 4 or port == 6 then
+      ym_address[port] = data
+    elseif (port == 5 or port == 7) and ym_file then
+      ym_file:write(string.format("%d %s %02X %02X\n", ym_frame, port == 5 and "A" or "B", ym_address[port - 1], data))
+    end
+  end)
+  taps[#taps + 1] = mem:install_write_tap(0x320000, 0x320001, "ymcmd", function(offset, data, mask)
+    if mask & 0xff00 ~= 0 and ym_file then
+      ym_file:write(string.format("%d cmd %02X\n", ym_frame, (data >> 8) & 0xff))
+    end
+  end)
+end
+
 local ramlog_file
 if job.ramlog then ramlog_file = assert(io.open(job.out .. "/ramlog.bin", "wb")) end
 
@@ -203,6 +227,11 @@ neodrift_frame_sub = emu.add_machine_frame_notifier(function()
     print(string.format("snapshot taken at frame %d", frame))
   end
   seed_frame = frame
+  ym_frame = frame
+  if job.ymlog then
+    if frame == job.ymlog[1] then install_ymlog() end
+    if frame == job.ymlog[2] and ym_file then ym_file:close() ym_file = nil end
+  end
   if job.seedlog then
     if frame == job.seedlog[1] then install_seedlog() end
     if frame == job.seedlog[2] and seedlog_file then seedlog_file:close() seedlog_file = nil end

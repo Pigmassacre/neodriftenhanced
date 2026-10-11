@@ -4,7 +4,7 @@ extends SceneTree
 ##
 ##   godot --headless --path Project --script res://tools/replay.gd -- \
 ##       --snapshot=PATH --frames=N --out=PATH [--input=FIELD:FIRST-LAST ...]
-##       [--seedlog=PATH] [--dump=FRAME[,FRAME...] --dump-dir=DIR]
+##       [--soundlog=PATH] [--seedlog=PATH] [--dump=FRAME[,FRAME...] --dump-dir=DIR]
 ##
 ## --dump writes the video state after those frames in the same format as
 ## the MAME harness dumps, for Tools/render.py and Tools/compare_video.py.
@@ -32,6 +32,7 @@ func _init() -> void:
 	var seedlog_path := ""
 	var dump_frames: Array[int] = []
 	var dump_dir := ""
+	var sound_path := ""
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--snapshot="):
 			snapshot = arg.trim_prefix("--snapshot=")
@@ -42,6 +43,8 @@ func _init() -> void:
 		elif arg.begins_with("--dump="):
 			for value in arg.trim_prefix("--dump=").split(","):
 				dump_frames.append(int(value))
+		elif arg.begins_with("--soundlog="):
+			sound_path = arg.trim_prefix("--soundlog=")
 		elif arg.begins_with("--dump-dir="):
 			dump_dir = arg.trim_prefix("--dump-dir=")
 		elif arg.begins_with("--seedlog="):
@@ -69,6 +72,7 @@ func _init() -> void:
 			if seed != null:
 				machine.ram.encode_u16(SEED, seed))
 	var out := FileAccess.open(out_path, FileAccess.WRITE) if out_path != "" else null
+	var sound_out := FileAccess.open(sound_path, FileAccess.WRITE) if sound_path != "" else null
 	var started := Time.get_ticks_usec()
 	var done := 0
 	for frame in frames:
@@ -88,6 +92,10 @@ func _init() -> void:
 		if machine.halted:
 			break
 		done += 1
+		if sound_out != null:
+			for command: int in machine.sound_log:
+				sound_out.store_line("%d %02X" % [frame, command])
+		machine.sound_log.clear()
 		if frame + 1 in dump_frames:
 			_dump(machine, dump_dir.path_join("g%06d.bin" % (frame + 1)), frame + 1)
 		if out != null:
