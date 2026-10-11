@@ -10,9 +10,11 @@ extends Node2D
 ##   --seedlog=PATH             random seeds from a MAME run (as tools/replay.gd), so
 ##                              screenshots can be compared pixel for pixel
 ##   --no-sound                 run without the sound board
-##   --record-audio=PATH        record the audio output to a WAV file (saved on quit)
+##   --record-audio=PATH        write the sound produced to a WAV file (saved on quit)
 ##   --shot=PATH --shot-frame=N[,N...]  save a screenshot after each of those frame
-##                              counts (PATH may contain %d) and quit after the last
+##                              counts (PATH may contain %d) and quit after the last;
+##                              runs as fast as it can, with the sound muted
+##   --frames=N                 quit after N frames, printing timing figures
 
 ## The hardware refreshes slightly slower than 60 Hz.
 const FRAME_TIME := 1.0 / 59.185606
@@ -28,8 +30,12 @@ var shot_path := ""
 var shot_frames: Array[int] = []
 var _time := 0.0
 var _sound_task := -1
-var _record: AudioEffectRecord
 var _record_path := ""
+var _quit_after := 0
+var _sound_ms := 0.0
+var _sound_ms_peak := 0.0
+var _machine_ms := 0.0
+var _machine_ms_peak := 0.0
 
 @onready var video: NeoGeoVideo = $Video
 @onready var sound: SoundBoard = $Sound
@@ -56,14 +62,15 @@ func _ready() -> void:
 			seedlog = arg.trim_prefix("--seedlog=")
 		elif arg == "--no-sound":
 			use_sound = false
+		elif arg.begins_with("--frames="):
+			_quit_after = int(arg.trim_prefix("--frames="))
 		elif arg.begins_with("--record-audio="):
 			_record_path = arg.trim_prefix("--record-audio=")
 	if not use_sound or not sound.load_roms(MachineLoader.repo_dir().path_join("neodrift")):
 		sound = null
-	if _record_path != "":
-		_record = AudioEffectRecord.new()
-		AudioServer.add_bus_effect(0, _record)
-		_record.set_recording_active(true)
+	if sound != null:
+		sound.capturing = _record_path != ""
+		sound.muted = not shot_frames.is_empty()
 	machine = MachineLoader.create()
 	if machine == null or MachineLoader.load_snapshot(machine, snapshot) != OK:
 		push_error("Could not start: need the generated program and %s" % snapshot)
@@ -141,22 +148,36 @@ func _step() -> void:
 				p1 |= P1_BITS[entry[0]]
 	if sound != null:
 		# The sound CPU ran alongside the previous frame on a worker thread.
-		if _sound_task >= 0:
-			WorkerThreadPool.wait_for_task_completion(_sound_task)
-		sound.apply_events()
+		_finish_sound_task()
+		sound.play_rendered()
 		machine.sound_reply = sound.reply
+		_sound_ms += sound.frame_ms
+		_sound_ms_peak = maxf(_sound_ms_peak, sound.frame_ms)
 	machine.input_p1 = p1
 	machine.input_start = start
 	machine.input_coin = coin
+	var started := Time.get_ticks_usec()
 	machine.run_frame()
+	var took := (Time.get_ticks_usec() - started) / 1000.0
+	_machine_ms += took
+	_machine_ms_peak = maxf(_machine_ms_peak, took)
 	if sound != null:
-		for value: int in machine.sound_log:
-			sound.command(value)
+		# the sound CPU's clock is a third of the main CPU's
+		for index in machine.sound_log.size():
+			sound.command(machine.sound_log[index], machine.sound_log_times[index] / 3)
 		_sound_task = WorkerThreadPool.add_task(sound.run_frame)
 	machine.sound_log.clear()
+	machine.sound_log_times.clear()
 	frame += 1
 	if machine.halted:
 		_report_halt()
+	if frame == _quit_after:
+		print("%d frames; game %.2f ms a frame (peak %.2f), sound %.2f ms (peak %.2f)"
+				% [frame, _machine_ms / frame, _machine_ms_peak, _sound_ms / frame, _sound_ms_peak])
+		if sound != null:
+			print("audio output ran dry %d times, %d frames of sound dropped" % [sound.underruns, sound.dropped])
+		_save_recording()
+		get_tree().quit()
 
 
 func _report_halt() -> void:
@@ -173,10 +194,25 @@ func _report_halt() -> void:
 	seeds.store_line("%06X" % machine.missing_block)
 
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_save_recording()
+
+
+func _exit_tree() -> void:
+	_finish_sound_task()
+
+
+## The sound board must not be freed while a worker thread is running it.
+func _finish_sound_task() -> void:
+	if _sound_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_sound_task)
+		_sound_task = -1
+
+
 func _save_recording() -> void:
-	if _record == null:
+	if sound == null or _record_path == "":
 		return
-	_record.set_recording_active(false)
-	var recording := _record.get_recording()
-	if recording != null:
-		recording.save_to_wav(_record_path)
+	_finish_sound_task()
+	SoundBoard.save_wav(sound.captured, _record_path)
+	_record_path = ""

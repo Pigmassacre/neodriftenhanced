@@ -96,6 +96,23 @@ def main():
             if program.plausible(v):
                 pointed.add(v)
     program.explore(sorted(pointed))
+    # Long straight-line routines fail that test, which stops after 64
+    # instructions. Take them too where they sit in a table next to a pointer
+    # already known to be code (the per-height sprite column writers do).
+    def code_pointer_at(o):
+        return 0 <= o < len(rom) - 3 and int.from_bytes(rom[o:o + 4], "big") in program.instrs
+    while True:
+        neighbours = set()
+        for o in range(0, len(rom) - 3, 2):
+            v = int.from_bytes(rom[o:o + 4], "big")
+            if 0x200 <= v < 0x100000 and not v & 1 and v not in program.instrs \
+                    and (code_pointer_at(o - 4) or code_pointer_at(o + 4)) \
+                    and program.plausible(v, limit=4096):
+                neighbours.add(v)
+        if not neighbours:
+            break
+        print("table neighbours:", " ".join("%06X" % v for v in sorted(neighbours)))
+        program.explore(sorted(neighbours))
     # only look for repeated runs where code has been found, not in the data beyond
     code_end = max(a for a in program.instrs if a < 0x100000)
     program.explore(sorted(program.repeated_runs(0x200, code_end)))

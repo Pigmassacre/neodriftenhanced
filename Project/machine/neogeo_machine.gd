@@ -92,7 +92,9 @@ var input_coin := 0
 # sound
 var sound_command := 0
 var sound_reply := 0
+## Sound commands written this frame, and when: main CPU cycles since the frame began.
 var sound_log: Array[int] = []
+var sound_log_times: Array[int] = []
 
 var _table: Dictionary = {}
 
@@ -378,6 +380,7 @@ func _io_write8(address: int, value: int) -> void:
 		if (address & 1) == 0:
 			sound_command = value
 			sound_log.append(value)
+			sound_log_times.append(cyc - frame_start)
 	elif region >= 0xD0 and region < 0xE0:
 		if not sram_locked:
 			sram[(address & 0xFFFF) ^ 1] = value

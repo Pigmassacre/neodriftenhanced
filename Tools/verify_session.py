@@ -54,6 +54,9 @@ SESSIONS = {
         ("right", 3500, 3520), ("b", 3600, 3640), ("a", 3660, 5200), ("left", 3700, 3760),
         ("right", 3800, 3900), ("left", 3960, 4000), ("right", 4100, 4130), ("left", 4200, 4300),
     ]),
+    # the end of the practice stage, stage 1 until the time runs out, the continue
+    # countdown, game over, and attract mode round to its demo of stage 1
+    "stage1_hold": (4400, 14000, menu_inputs() + [("a", 3100, 14000)]),
 }
 
 

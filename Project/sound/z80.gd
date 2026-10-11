@@ -14,7 +14,8 @@ const FLAG_H := 0x10
 const FLAG_Z := 0x40
 const FLAG_S := 0x80
 
-# Cycles for the unprefixed opcodes 0x00-0x3F and 0xC0-0xFF (taken branches cost the same here).
+# Cycles for the unprefixed opcodes 0x00-0x3F and 0xC0-0xFF; taken conditional
+# jumps, calls and returns add theirs where they are executed.
 const CYCLES_LOW: Array[int] = [
 	4, 10, 7, 6, 4, 4, 7, 4, 4, 11, 7, 6, 4, 4, 7, 4,
 	8, 10, 7, 6, 4, 4, 7, 4, 12, 11, 7, 6, 4, 4, 7, 4,
@@ -49,12 +50,18 @@ var iff1 := false
 var iff2 := false
 var halted := false
 var cycles := 0
+## Refresh counter: steps once per opcode fetched. The driver reads it as a random number.
+var r := 0
+## run() returns when execution reaches this address.
+var stop_pc := -1
 var bad_opcode := -1
 
 var bus: Object
 var _szp := PackedInt32Array()
 # 0: HL, 1: IX, 2: IY for the instruction being executed
 var _index := 0
+# Counts down the instructions until interrupts enabled by EI can be taken.
+var _enable_delay := 0
 
 
 func _init(owner: Object) -> void:
@@ -68,6 +75,8 @@ func _init(owner: Object) -> void:
 
 
 func reset() -> void:
+	r = 0
+	_enable_delay = 0
 	pc = 0
 	sp = 0xFFFF
 	iff1 = false
@@ -86,7 +95,7 @@ func nmi() -> void:
 
 ## Maskable interrupt, mode 1. Returns false when interrupts are disabled.
 func irq() -> bool:
-	if not iff1:
+	if not iff1 or _enable_delay > 0:
 		return false
 	halted = false
 	iff1 = false
@@ -294,15 +303,30 @@ func _rotate(kind: int, value: int) -> int:
 
 # --- execution ---------------------------------------------------------------
 
+## Runs until `limit` cycles, the stop address, or the point where newly
+## enabled interrupts can be taken, whichever comes first.
+func run(limit: int) -> void:
+	while cycles < limit:
+		step()
+		if _enable_delay > 0:
+			_enable_delay -= 1
+			if _enable_delay == 0:
+				return
+		if pc == stop_pc:
+			return
+
+
 func step() -> void:
 	if halted:
 		cycles += 4
 		return
 	_index = 0
+	r += 1
 	var op := _fetch()
 	while op == 0xDD or op == 0xFD:
 		_index = 1 if op == 0xDD else 2
 		cycles += 4
+		r += 1
 		op = _fetch()
 	if op == 0xCB:
 		_step_cb()
@@ -383,6 +407,7 @@ func _step_low(op: int) -> void:
 					b = (b - 1) & 0xFF
 					if b != 0:
 						pc = (pc + ((offset ^ 0x80) - 0x80)) & 0xFFFF
+						cycles += 5
 				3:
 					var offset := _fetch()
 					pc = (pc + ((offset ^ 0x80) - 0x80)) & 0xFFFF
@@ -390,6 +415,7 @@ func _step_low(op: int) -> void:
 					var offset := _fetch()
 					if _condition(y - 4):
 						pc = (pc + ((offset ^ 0x80) - 0x80)) & 0xFFFF
+						cycles += 5
 		1:
 			if (op & 8) == 0:
 				_set_pair(y >> 1, _fetch16())
@@ -429,6 +455,8 @@ func _step_low(op: int) -> void:
 			if y == 6:
 				var addr := _hl_address()
 				bus.mem_write(addr, _fetch())
+				if _index != 0:
+					cycles -= 3
 			else:
 				_set_reg_indexed(y, _fetch())
 		7:
@@ -483,6 +511,7 @@ func _step_high(op: int) -> void:
 		0:
 			if _condition(y):
 				pc = _pop()
+				cycles += 6
 		1:
 			if (op & 8) == 0:
 				var value := _pop()
@@ -538,11 +567,13 @@ func _step_high(op: int) -> void:
 				7:
 					iff1 = true
 					iff2 = true
+					_enable_delay = 2
 		4:
 			var target := _fetch16()
 			if _condition(y):
 				_push(pc)
 				pc = target
+				cycles += 7
 		5:
 			if (op & 8) == 0:
 				_push(((a << 8) | f) if y == 6 else _pair(y >> 1))
@@ -570,7 +601,12 @@ func _step_cb() -> void:
 	if in_memory and _index == 0:
 		addr = (h << 8) | l
 	var value: int = bus.mem_read(addr) if in_memory else _reg(target)
-	cycles += 15 if in_memory else 8
+	r += 1
+	if not in_memory:
+		cycles += 8
+	else:
+		# testing a bit does not write back; the indexed forms take four more (after the prefix)
+		cycles += (12 if (op >> 6) == 1 else 15) + (4 if _index != 0 else 0)
 	match op >> 6:
 		0:
 			value = _rotate(y, value)
@@ -591,6 +627,7 @@ func _step_cb() -> void:
 func _step_ed() -> void:
 	var op := _fetch()
 	cycles += 12
+	r += 1
 	var y := (op >> 3) & 7
 	if op >= 0x40 and op < 0x80:
 		match op & 7:
@@ -602,6 +639,7 @@ func _step_ed() -> void:
 			1:
 				bus.port_out((b << 8) | c, 0 if y == 6 else _reg(y))
 			2:
+				cycles += 3
 				var left := (h << 8) | l
 				var right := _pair(y >> 1) if (y >> 1) != 2 else left
 				var carry := f & FLAG_C
@@ -620,6 +658,7 @@ func _step_ed() -> void:
 					h = (result >> 8) & 0xFF
 					l = result & 0xFF
 			3:
+				cycles += 8
 				var addr := _fetch16()
 				var index := y >> 1
 				if (op & 8) == 0:
@@ -631,18 +670,24 @@ func _step_ed() -> void:
 				else:
 					_set_pair(index, _read16(addr))
 			4:
+				cycles -= 4
 				var value := a
 				a = 0
 				_sub(value, 0, true)
 			5:
+				cycles += 2
 				pc = _pop()
 				iff1 = iff2
+				_enable_delay = 1
 			6:
-				pass  # interrupt mode: only mode 1 is used
+				cycles -= 4  # interrupt mode: only mode 1 is used
 			7:
+				cycles += 6 if y >= 4 else -3
 				match y:
+					1:
+						r = a
 					2, 3:
-						a = 0
+						a = (r & 0x7F) if y == 3 else 0
 						f = (f & FLAG_C) | _szp[a] | (FLAG_PV if iff2 else 0)
 					4:
 						var addr := (h << 8) | l
@@ -657,6 +702,7 @@ func _step_ed() -> void:
 						a = (a & 0xF0) | (value >> 4)
 						f = (f & FLAG_C) | _szp[a]
 	elif op >= 0xA0 and op < 0xC0 and (op & 7) < 4:
+		cycles += 4
 		_block(op)
 	else:
 		bad_opcode = 0xED00 | op
@@ -694,6 +740,7 @@ func _block(op: int) -> void:
 			f = (f & FLAG_C) | FLAG_N | (FLAG_Z if b == 0 else 0)
 			if repeat and b != 0:
 				pc = (pc - 2) & 0xFFFF
+				cycles += 5
 		3:
 			b = (b - 1) & 0xFF
 			bc = (b << 8) | c
@@ -701,6 +748,7 @@ func _block(op: int) -> void:
 			f = (f & FLAG_C) | FLAG_N | (FLAG_Z if b == 0 else 0)
 			if repeat and b != 0:
 				pc = (pc - 2) & 0xFFFF
+				cycles += 5
 	hl = (hl + step) & 0xFFFF
 	h = hl >> 8
 	l = hl & 0xFF

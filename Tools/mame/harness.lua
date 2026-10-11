@@ -24,8 +24,8 @@
 --            The game steps the seed while it waits, so replays need the value
 --            it actually had when the frame's logic started.
 --   ymlog = {first, last}     optional: sound chip register writes and sound
---            commands to ymlog.txt, as "frame port register value" (port A/B)
---            and "frame cmd value"
+--            commands to ymlog.txt, as "frame port register value seconds"
+--            (port A/B, machine time of the write) and "frame cmd value seconds"
 --   trace  = { first, last, { {name, addr, size}, ... } }  optional per-frame RAM trace (CSV)
 --
 -- Video RAM is not readable without side effects, so it is shadowed here by
@@ -189,12 +189,13 @@ local function install_ymlog()
     if port == 4 or port == 6 then
       ym_address[port] = data
     elseif (port == 5 or port == 7) and ym_file then
-      ym_file:write(string.format("%d %s %02X %02X\n", ym_frame, port == 5 and "A" or "B", ym_address[port - 1], data))
+      ym_file:write(string.format("%d %s %02X %02X %.9f\n", ym_frame, port == 5 and "A" or "B",
+        ym_address[port - 1], data, machine.time:as_double()))
     end
   end)
   taps[#taps + 1] = mem:install_write_tap(0x320000, 0x320001, "ymcmd", function(offset, data, mask)
     if mask & 0xff00 ~= 0 and ym_file then
-      ym_file:write(string.format("%d cmd %02X\n", ym_frame, (data >> 8) & 0xff))
+      ym_file:write(string.format("%d cmd %02X %.9f\n", ym_frame, (data >> 8) & 0xff, machine.time:as_double()))
     end
   end)
 end

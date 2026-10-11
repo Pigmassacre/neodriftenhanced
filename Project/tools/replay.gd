@@ -96,6 +96,7 @@ func _init() -> void:
 			for command: int in machine.sound_log:
 				sound_out.store_line("%d %02X" % [frame, command])
 		machine.sound_log.clear()
+		machine.sound_log_times.clear()
 		if frame + 1 in dump_frames:
 			_dump(machine, dump_dir.path_join("g%06d.bin" % (frame + 1)), frame + 1)
 		if out != null:
