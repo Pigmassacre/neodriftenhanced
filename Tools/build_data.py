@@ -1,9 +1,11 @@
 """Build the runtime data cache in data/ that the Godot project loads.
 
-Usage: python3 Tools/build_data.py <state_dump.bin>
+Usage: python3 Tools/build_data.py [state_dump.bin]
 
-Everything is derived from the ROMs in neodrift/ (and, for now, palettes from
-a MAME state dump taken during the practice race). data/ is not checked in.
+Everything is derived from the ROMs in neodrift/ and the BIOS in neogeo/.
+data/ is not checked in. The optional MAME state dump only supplies the
+palette for the standalone course viewer (main.tscn); the game itself gets
+its palettes from the running program.
 """
 import os
 import struct
@@ -33,6 +35,21 @@ def build_tiles():
             sheet[dst:dst + 16] = pix[y * 16:y * 16 + 16]
     with open(os.path.join(OUT, "tiles.bin"), "wb") as f:
         f.write(sheet)
+
+
+def build_fix():
+    """Text-layer tiles of the cartridge and the BIOS, each as a 512x512 8-bit image (64 tiles per row)."""
+    for name, data in (("fix_cart.bin", neogeo.load_fix()), ("fix_bios.bin", render.load_bios_file("sfix.sfix"))):
+        side = 512
+        sheet = bytearray(side * side)
+        for t in range(4096):
+            pix = neogeo.decode_fix_tile(data, t)
+            ox, oy = (t & 63) * 8, (t >> 6) * 8
+            for y in range(8):
+                dst = (oy + y) * side + ox
+                sheet[dst:dst + 8] = pix[y * 8:y * 8 + 8]
+        with open(os.path.join(OUT, name), "wb") as f:
+            f.write(sheet)
 
 
 def build_map(name, header, table):
@@ -82,8 +99,10 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     build_tiles()
     build_zoom()
+    build_fix()
     build_map("practice", *PRACTICE_MAP)
-    build_palette("practice", sys.argv[1])
+    if len(sys.argv) > 1:
+        build_palette("practice", sys.argv[1])
     for n in sorted(os.listdir(OUT)):
         print(n, os.path.getsize(os.path.join(OUT, n)))
 
