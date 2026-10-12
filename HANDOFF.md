@@ -3,20 +3,105 @@
 State of the Neo Drift Out Godot port, for whoever continues it. Read
 `README.md` first for setup and the one-paragraph architecture.
 
-## The agreed approach
+## The goal and the approach
 
-The owner chose **"translate, then rewrite"**:
+**The goal is the enhanced game, not an emulator.** The owner's plan is in
+`TODO.md`: finish the static recompilation (done), then decompile the game
+into readable code (under way, see "Decompilation" below), then the
+enhancements: widescreen, minimap, real translucency, reworked menus and
+HUD, a CRT shader, and later a level editor and mods.
+
+The translated program and the comparison with MAME are the means: they say
+exactly what the game does, so that every hand-written routine can be
+checked. Spend time on machine accuracy only where an enhancement or the
+decompilation needs it.
 
 1. Machine-translate the original 68000 program to GDScript at build time
-   (`Tools/recomp/` → `data/game/code/`, never committed).
+   (`Tools/recomp/` → `data/game/code/`, never committed). **Done**: the
+   whole game runs.
 2. Keep rendering, input and audio native Godot.
-3. Later, hand-rewrite individual routines into readable GDScript where
-   enhancements are wanted, verified against the translated version.
+3. Hand-write the game routine by routine in `Project/game/`, each checked
+   against its translated original. **Started**: 40 routines (895 of about 16700
+   instructions), the car's driving.
 
-Step 3 has not started. Nothing derived from the ROMs may be committed:
-`data/`, `neodrift/` and `neogeo/` are git-ignored on purpose.
+Nothing derived from the ROMs may be committed: `data/`, `neodrift/` and
+`neogeo/` are git-ignored on purpose. The hand-written code in
+`Project/game/` is committed; the tables it reads stay in the ROM and are
+referred to by address.
 
-The owner agreed to target the **Practice Stage first**, then Stage 1.
+## Decompilation
+
+`python3 Tools/routines.py` shows what there is to do: in the nine recorded
+sessions about 970 routines of the game ran, some 16700 instructions (the
+rest of the 2 MB program is data or never runs). It lists them in
+`data/game/routines.txt` with size, call counts, share of CPU time, callers
+and callees, and marks those already hand-written.
+
+How a hand-written routine lives among translated ones:
+
+- A script in `Project/game/` extends `GameRoutines` and lists its routines
+  by address in `routines()`; `Decomp.GROUPS` lists the scripts.
+  `NeoGeoMachine.replace_routine` puts each in place of the translated block
+  at that address.
+- The routine takes its arguments where the original did (registers of the
+  machine `m`, work RAM through `u16`/`set16`/..., ROM tables through
+  `rom_u16`/...), and must leave RAM and the registers its callers read as
+  the original would. `scratch()` names the registers it leaves different.
+- It calls routines that are still translated with `m.call_routine(address)`,
+  and hand-written ones as ordinary methods.
+- Hand-written code takes no CPU time.
+
+Workflow for a routine:
+
+```sh
+python3 Tools/routines.py --routine E8BA        # listing, from the recompiler's decoder
+# write it in Project/game/, add it to routines()
+python3 Tools/verify_session.py practice_steer --keep-recording --check-routines
+```
+
+`--check-routines` (`Project/tools/routine_check.gd`) runs every call of
+every hand-written routine twice from the same state, original first, and
+reports any difference in work RAM, video RAM, palettes, sound commands or
+registers, with the registers the call started from. The run then goes on
+from the hand-written outcome at the original's time, so the usual
+comparison of the whole session with MAME still holds, and a caller that
+depends on a "scratch" register shows up there. **State: all 40 routines
+agree on every call of all nine sessions (1.3 million calls), and the
+sessions match MAME exactly as far as the translation alone does.**
+Branches that no session takes are unchecked, though: the listing marks
+them "ran 0 times" (driving backwards through a gate, for one). A session
+that takes them is the way to check them.
+
+Other switches: `--translated` leaves the hand-written routines out;
+`--only-routines=E8BA,EAA8` uses just those; `--profile` rewrites the
+block profile `routines.py` reads; `replay.gd --watch=OFFSET` reports every
+change of a work RAM word with the block and raster line.
+
+What is known so far is in the code: `Project/game/car.gd` names the car
+object's fields (the player's car is at `$101508`, in A6) and the ROM
+tables it uses. Where to go next, in the car: `$EDF4` (scrolling the
+course under the camera), `$EEA6`/`$EEBC` (drawing the car, on the ground
+and in the air), `$F696` (sparks off a wall), then the caller `$D956` and
+the other eleven driving states (table at `$DA72`; `$DDA4` is close to
+`$DAAC`). `$15256` queues a sound; it waits for the interrupt handler when
+the queue is full, so it needs the handler's side decompiled with it. `$13E74` is the terrain lookup (a cache of four
+decoded 128x128 blocks; `$13EF4` decodes one). The sprite list builder
+around `$12036-$13330` takes most of the CPU time and is what a native
+renderer would replace.
+
+Two things to know:
+
+- **Without `--check-routines`, a run with hand-written routines drifts
+  from MAME** where the original needs more than a frame for a frame's work
+  (first in the menus, frame 2005 of `practice_steer`): the original drops
+  a frame there and hand-written code, taking no time, does not. The game
+  plays the same; it just does not slow down. So `--shots`, which runs the
+  real game, is only pixel-exact with `--translated`.
+- While being checked, a routine runs to its end before an interrupt is
+  taken. That has made no difference so far, but it will once hand-written
+  routines cover most of a frame; by then the interrupt handlers need
+  decompiling too, and the comparison becomes work RAM at the end of each
+  frame against the recordings.
 
 ## What works, and how it was verified
 
@@ -26,7 +111,7 @@ The owner agreed to target the **Practice Stage first**, then Stage 1.
 | Video (sprites, shrink, text layer, palettes, changes while the picture is drawn, 96 sprites a line) | Same range | 670 of 681 screenshots pixel-exact |
 | CPU timing | 68000 timing tables, interrupt and raster timer timing | Each replay reports it: the port leaves the wait for the vertical blank on the same turn of the wait loop (146 of 202752 cycles) as MAME in about 3 frames of 4, and within one turn otherwise |
 | Sound driver (Z80 + chip timers) | Runs the real driver | `compare_ym.py` over the whole game: 72319 of 72322 chip register writes match MAME in order, a median of 0.00 ms apart |
-| Sound chip (FM, square waves/noise, sampled channels, stereo) | Synthesised in `Project/sound/ym2610.gd` | `compare_audio.py` on the practice session: MAME's own chip writes replayed into the model leave at most -38 dB of MAME's recording unexplained in any second; levels match. **Not checked by ear** |
+| Sound chip (FM, square waves/noise, sampled channels, stereo) | Synthesised in `Project/sound/ym2610.gd` | `compare_audio.py` on the practice session: MAME's own chip writes replayed into the model leave at most -38 dB of MAME's recording unexplained in any second; levels match. The owner has listened to it |
 
 | Session | Work RAM identical | Screenshots pixel-exact |
 |---|---|---|
@@ -54,8 +139,8 @@ The owner agreed to target the **Practice Stage first**, then Stage 1.
 
 ```sh
 cd Tools
-python3 verify_session.py practice_steer --shots     # RAM + screenshots vs MAME
-python3 verify_session.py practice_hold --shots
+python3 verify_session.py practice_steer --keep-recording --check-routines   # hand-written routines
+python3 verify_session.py practice_steer --translated --shots   # the machine: RAM + screenshots vs MAME
 ```
 
 - Sessions (scripted inputs) are defined at the top of `verify_session.py`.
@@ -99,8 +184,7 @@ python3 verify_session.py practice_hold --shots
 ## Remaining work, roughly in priority order
 
 ### Sound
-1. **Listen to it.** Everything above is measured against MAME, nobody has
-   heard it.
+1. Listened to by the owner (2026-10-12).
 2. **ADPCM-B** (the seventh sampled channel) is not synthesised, and the
    game does not seem to use it: in a run of the whole game (`ymlog` over
    frames 100 to 61990) the driver only ever resets it.
@@ -131,7 +215,7 @@ python3 verify_session.py practice_hold --shots
 8. Other cars, two-player, continuing after a coin, service/test mode:
    untested. (The attract demos do show the other cars.)
 
-### Machine accuracy
+### Machine accuracy (low priority: the goal is not an emulator)
 9. **CPU timing is exact except when the raster interrupt lands in the
    middle of the frame's work**, because interrupts are only taken between
    translated blocks (the wait loop is one block per instruction, so there
@@ -166,14 +250,13 @@ python3 verify_session.py practice_hold --shots
     captured), palette writes while the picture is being drawn (they apply
     to the whole frame).
 
-### The "enhanced" part (not started)
-13. Hand-rewrite routines, starting with the car. Useful facts already found:
-    - Car object at `$101500` (A6). `+$14` speed, `+$C0/+$C4` position 16.16,
-      `+$DC` travel direction, `+$DE` facing, `+$0A` zoom (8.8), `+$D8/+$DA`
-      camera, `+$E4` driving state (12 states, table at `$DA72`).
-    - Per-frame car update at `$D956`; normal driving state at `$DAAC`.
-    - Terrain lookup `$13E74` (x, y → surface code; `< $20` wall with angle,
-      `$20-$3F` edge types, `>= $40` surface table at `$232E2`).
+### Decompilation and the "enhanced" part
+13. Decompile, see "Decompilation" above. Useful facts beyond what
+    `Project/game/car.gd` records:
+    - Per-frame car update at `$D956`; driving states through the table at
+      `$DA72` (normal driving `$DAAC` is hand-written).
+    - Terrain lookup `$13E74` (x, y → ground code; `< $20` wall with angle,
+      `$20-$3F` edge types, `>= $40` open ground, table at `$232E2`).
     - Course maps: 16x16-tile blocks; practice map header `$2B464E`, block
       table `$2B5E56` (`Tools/extract_map.py`). Background scroll/zoom logic
       at `$1348E-$13E12`.
@@ -188,7 +271,11 @@ python3 verify_session.py practice_hold --shots
       range of the program listing. MAME's linear listing is misaligned in
       places — the recompiler's own decoder (`Tools/recomp/m68k.py`) is the
       authority.
-14. Generated code load time is about 5 s (6 MB of GDScript). Fine for now.
+14. The enhancements of `TODO.md` come after the decompilation, but the
+    wide view can be prepared: the course viewer above draws the background
+    from map data at any size, and the car code now names the camera and
+    zoom fields it needs.
+15. Generated code load time is about 5 s (6 MB of GDScript). Fine for now.
 
 ## Traps that cost time
 
@@ -225,6 +312,12 @@ python3 verify_session.py practice_hold --shots
   to the tools under `Project/tools/`.
 - The program ROM file is word-swapped, with its second megabyte at bus
   address 0 and its first at `$200000`.
+
+- **A new `class_name` is unknown to a headless run** until Godot has scanned
+  the project: `Godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path
+  Project --import` once after adding one.
+- **Callables do not keep a RefCounted object alive.** The routine groups
+  are stored on the machine for that reason (`Decomp.groups`).
 
 ## Repository state
 

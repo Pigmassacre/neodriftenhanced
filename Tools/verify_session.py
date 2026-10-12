@@ -109,6 +109,13 @@ def main():
     parser.add_argument("--frames", type=int, help="limit the number of frames replayed")
     parser.add_argument("--shots", action="store_true", help="also compare screenshots")
     parser.add_argument("--shot-step", type=int, default=100)
+    parser.add_argument("--profile", action="store_true",
+                        help="also write profile.txt (block and edge counts) for routines.py")
+    parser.add_argument("--translated", action="store_true",
+                        help="run the translated program alone, without the hand-written routines")
+    parser.add_argument("--only-routines", help="hand-written routines to use (hex addresses, comma separated)")
+    parser.add_argument("--check-routines", action="store_true",
+                        help="run every call of a hand-written routine both ways and compare")
     parser.add_argument("--keep-recording", action="store_true", help="reuse an existing MAME recording")
     args = parser.parse_args()
 
@@ -136,12 +143,24 @@ def main():
         + replay_inputs(inputs, snapshot_frame, frames)
     if topup:
         common.append("--topup=%d:%d:%d" % topup)
+    extra = ["--profile=" + os.path.join(out, "profile.txt")] if args.profile else []
+    if args.check_routines:
+        extra.append("--check-routines")
+    if args.translated:
+        common.append("--translated")
+    if args.only_routines:
+        common.append("--only-routines=" + args.only_routines)
     result = subprocess.run([GODOT, "--headless", "--path", PROJECT, "--script", "res://tools/replay.gd", "--",
-                             "--frames=%d" % frames, "--out=" + godot_log] + common,
+                             "--frames=%d" % frames, "--out=" + godot_log] + common + extra,
                             capture_output=True, text=True)
     for line in result.stdout.splitlines():
-        if line.startswith(("ran ", "missing ", "timing")):
+        if line.startswith(("ran ", "missing ", "timing", "routine ", "  entered")):
             print("godot:", line)
+    for line in result.stderr.splitlines():
+        if "ERROR" in line:
+            print("godot:", line)
+    if not any(line.startswith("ran %d frames" % frames) for line in result.stdout.splitlines()):
+        sys.exit("godot: the replay did not finish")
     sys.argv = ["compare_ram", os.path.join(out, "ramlog.bin"), godot_log, str(snapshot_frame - first + 1)]
     compare_ram.main()
 

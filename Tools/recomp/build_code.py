@@ -27,7 +27,8 @@ WAIT_LOOPS = ((0xb6e, 0xb7e), (0x10b8, 0x10ce))
 BASE_SCRIPT = "res://machine/neogeo_machine.gd"
 
 
-def main():
+def analyse(traces=()):
+    """Finds the program's code. Returns the Program with its blocks built, and the seeds."""
     rom = neogeo.load_program()
     with open(BIOS_FILE, "rb") as f:
         bios = bytearray(f.read())
@@ -80,7 +81,7 @@ def main():
         with open(SEEDS) as f:
             seeds.update(int(line, 16) for line in f if line.strip())
     traced = set()
-    for path in sys.argv[1:]:
+    for path in traces:
         with open(path) as f:
             for line in f:
                 m = re.match(r"^([0-9A-F]{6}):", line)
@@ -136,6 +137,11 @@ def main():
         program.leaders.update(a for a in program.instrs if first <= a <= last)
     program.build_blocks()
     program.liveness()
+    return program, seeds
+
+
+def main():
+    program, seeds = analyse(sys.argv[1:])
     files = gen.generate(program, BASE_SCRIPT)
 
     shutil.rmtree(OUT, ignore_errors=True)

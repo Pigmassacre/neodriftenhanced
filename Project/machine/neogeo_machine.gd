@@ -1,3 +1,4 @@
+class_name NeoGeoMachine
 extends RefCounted
 ## Neo Geo MVS machine model that the recompiled game program runs on.
 ##
@@ -123,6 +124,9 @@ var sound_reply := 0
 var sound_log: Array[int] = []
 var sound_log_times: Array[int] = []
 
+## Return address of a routine called by hand-written code: never a block.
+const CALL_RETURN := 0xFFFFFE
+
 var _table: Dictionary = {}
 ## Number of one bits in each 16-bit value (multiply timing).
 static var ONES := PackedByteArray()
@@ -159,6 +163,50 @@ func hook_block(address: int, callback: Callable) -> void:
 	_table[address] = func() -> int:
 		callback.call()
 		return original.call()
+
+
+## Call when done with the machine: the replaced and hooked blocks refer
+## back to it, which would keep it and the hand-written routines alive.
+func release() -> void:
+	_table = {}
+	remove_meta(&"hand_written")
+
+
+## The code that runs when execution reaches `address`.
+func block(address: int) -> Callable:
+	return _table[address]
+
+
+func set_block(address: int, code: Callable) -> void:
+	_table[address] = code
+
+
+## Replaces the translated routine at `address` with `routine`: hand-written
+## code (see Project/game/) that takes its arguments from the registers and
+## memory, leaves there what the callers use, and takes no CPU time.
+func replace_routine(address: int, routine: Callable) -> void:
+	_table[address] = func() -> int:
+		routine.call()
+		var back := r32(a7) & 0xFFFFFF
+		a7 = (a7 + 4) & 0xFFFFFFFF
+		return back
+
+
+## Runs the routine at `address` until it returns, for hand-written code
+## calling a routine that is still translated. Interrupts wait until the
+## hand-written code itself returns.
+func call_routine(address: int) -> void:
+	var stack := a7
+	a7 = (a7 - 4) & 0xFFFFFFFF
+	w32(a7, CALL_RETURN)
+	var at := address
+	while not (at == CALL_RETURN and a7 == stack):
+		var code: Variant = _table.get(at)
+		if code == null or halted:
+			missing_block = at
+			halted = true
+			return
+		at = code.call()
 
 
 # --- execution ---------------------------------------------------------------

@@ -5,7 +5,8 @@ extends SceneTree
 ##   godot --headless --path Project --script res://tools/replay.gd -- \
 ##       --snapshot=PATH --frames=N --out=PATH [--input=FIELD:FIRST-LAST ...]
 ##       [--soundlog=PATH] [--seedlog=PATH] [--dump=FRAME[,FRAME...] --dump-dir=DIR]
-##       [--topup=OFFSET:BELOW:VALUE] [--cycles=FIRST-LAST:PATH]
+##       [--topup=OFFSET:BELOW:VALUE] [--cycles=FIRST-LAST:PATH] [--profile=PATH]
+##       [--translated | --check-routines]
 ##
 ## --dump writes the video state after those frames in the same format as
 ## the MAME harness dumps, for Tools/render.py and Tools/compare_video.py.
@@ -17,6 +18,14 @@ extends SceneTree
 ##
 ## --cycles writes "address cycle-count" for every translated block entered
 ## in those frames, for Tools/compare_cycles.py --port.
+##
+## --translated runs the translated program alone, without the hand-written
+## routines of Project/game/. --check-routines does too, but runs every call
+## of a routine that has a hand-written version both ways and reports where
+## the outcomes differ (see RoutineCheck).
+##
+## --profile counts how often every translated block ran and which block ran
+## before it ("B address count", "E from to count"), for Tools/routines.py.
 ##
 ## --topup keeps a work RAM word topped up before every frame (see
 ## NeoGeoMachine.top_up); numbers are decimal.
@@ -47,6 +56,9 @@ func _init() -> void:
 	var topup := PackedInt32Array()
 	var cycle_span: Array[int] = []
 	var cycle_out: FileAccess = null
+	var profile_path := ""
+	var hand_written := true
+	var check_routines := false
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--snapshot="):
 			snapshot = arg.trim_prefix("--snapshot=")
@@ -67,6 +79,13 @@ func _init() -> void:
 			var parts := arg.trim_prefix("--cycles=").split(":", true, 1)
 			cycle_span = [int(parts[0].split("-")[0]), int(parts[0].split("-")[1])]
 			cycle_out = FileAccess.open(parts[1], FileAccess.WRITE)
+		elif arg == "--translated":
+			hand_written = false
+		elif arg == "--check-routines":
+			hand_written = false
+			check_routines = true
+		elif arg.begins_with("--profile="):
+			profile_path = arg.trim_prefix("--profile=")
 		elif arg.begins_with("--topup="):
 			for value in arg.trim_prefix("--topup=").split(":"):
 				topup.append(int(value))
@@ -74,11 +93,15 @@ func _init() -> void:
 			var parts := arg.trim_prefix("--input=").split(":")
 			var span := parts[1].split("-")
 			inputs.append([parts[0], int(span[0]), int(span[1])])
-	var machine := MachineLoader.create()
+	var machine := MachineLoader.create(hand_written)
 	if machine == null or MachineLoader.load_snapshot(machine, snapshot) != OK:
 		push_error("Could not set up the machine")
 		quit(1)
 		return
+	var checker: RoutineCheck = null
+	if check_routines:
+		checker = RoutineCheck.new(machine)
+		checker.install()
 	var exit_seeds := {}
 	var frame_box := [0]
 	var timing := [0, 0]
@@ -102,6 +125,29 @@ func _init() -> void:
 			machine.hook_block(address, func() -> void:
 				if frame_box[0] >= cycle_span[0] and frame_box[0] <= cycle_span[1]:
 					cycle_out.store_line("%06X %d" % [address, machine.cyc]))
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--watch="):
+			# reports every change of a work RAM word: --watch=OFFSET (hex)
+			var offset := arg.trim_prefix("--watch=").hex_to_int()
+			var seen := [machine.ram.decode_u16(offset), 0]
+			for address: int in machine.block_table().keys():
+				machine.hook_block(address, func() -> void:
+					var value := machine.ram.decode_u16(offset)
+					if value != seen[0]:
+						print("frame %d: %04X -> %04X before %06X (after %06X), line %d, a6=%X" % [
+								frame_box[0], seen[0], value, address, seen[1], machine.raster_line(), machine.a6])
+						seen[0] = value
+					seen[1] = address)
+	var block_counts := {}
+	var edge_counts := {}
+	var previous := [0]
+	if profile_path != "":
+		for address: int in machine.block_table().keys():
+			machine.hook_block(address, func() -> void:
+				block_counts[address] = block_counts.get(address, 0) + 1
+				var edge: int = (previous[0] << 24) | address
+				edge_counts[edge] = edge_counts.get(edge, 0) + 1
+				previous[0] = address)
 	var out := FileAccess.open(out_path, FileAccess.WRITE) if out_path != "" else null
 	var sound_out := FileAccess.open(sound_path, FileAccess.WRITE) if sound_path != "" else null
 	var started := Time.get_ticks_usec()
@@ -119,6 +165,8 @@ func _init() -> void:
 				else:
 					machine.input_p1 |= P1_BITS[entry[0]]
 		frame_box[0] = frame
+		if checker != null:
+			checker.frame = frame
 		if not topup.is_empty():
 			machine.top_up(topup[0], topup[1], topup[2])
 		machine.run_frame()
@@ -142,6 +190,14 @@ func _init() -> void:
 		print("timing: the wait for the vertical blank ended on MAME's seed in %d of %d frames; turns of the wait loop (%d cycles each) more than MAME: median %d, nine in ten frames within %d to %d; %d frames further than %d off"
 				% [timing[0], timing[1], WAIT_TURN_CYCLES, offsets[offsets.size() / 2],
 				offsets[offsets.size() / 20], offsets[offsets.size() * 19 / 20 - far], far, MAX_TURNS])
+	if checker != null:
+		checker.report()
+	if profile_path != "":
+		var profile := FileAccess.open(profile_path, FileAccess.WRITE)
+		for address: int in block_counts:
+			profile.store_line("B %06X %d" % [address, block_counts[address]])
+		for edge: int in edge_counts:
+			profile.store_line("E %06X %06X %d" % [edge >> 24, edge & 0xFFFFFF, edge_counts[edge]])
 	if machine.missing_block >= 0:
 		print("missing code at %06X" % machine.missing_block)
 		var seeds := FileAccess.open(MachineLoader.repo_dir().path_join("data/game/seeds.txt"),
@@ -151,7 +207,9 @@ func _init() -> void:
 					FileAccess.WRITE)
 		seeds.seek_end()
 		seeds.store_line("%06X" % machine.missing_block)
-	quit(0 if not machine.halted else 2)
+	var halted: bool = machine.halted
+	machine.release()
+	quit(0 if not halted else 2)
 
 
 ## How many more turns of the wait loop led to `ours` than to `theirs`

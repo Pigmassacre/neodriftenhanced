@@ -17,7 +17,10 @@ static func repo_dir() -> String:
 
 
 ## Returns the machine (an instance of the generated program), or null.
-static func create() -> RefCounted:
+## With `hand_written`, the routines of Project/game/ replace their
+## translated originals (all of them, or those named by a command line
+## argument --only-routines=ADDRESS,ADDRESS... in hexadecimal).
+static func create(hand_written := true) -> NeoGeoMachine:
 	var root := repo_dir()
 	var file := FileAccess.get_file_as_bytes(root.path_join(PROGRAM_ROM))
 	var bios := FileAccess.get_file_as_bytes(root.path_join(BIOS_ROM))
@@ -31,8 +34,15 @@ static func create() -> RefCounted:
 	if script == null:
 		push_error("Generated program missing - run Tools/recomp/build_code.py")
 		return null
-	var machine: RefCounted = script.new()
+	var machine: NeoGeoMachine = script.new()
 	machine.setup(rom, bios)
+	if hand_written:
+		var only: Array[int] = []
+		for arg in OS.get_cmdline_user_args():
+			if arg.begins_with("--only-routines="):
+				for address in arg.trim_prefix("--only-routines=").split(","):
+					only.append(address.hex_to_int())
+		Decomp.install(machine, only)
 	return machine
 
 

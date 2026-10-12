@@ -1,0 +1,31 @@
+class_name Decomp
+extends RefCounted
+## The hand-written part of the game: installs every routine of the scripts
+## listed here over its translated original.
+
+const GROUPS: Array[GDScript] = [
+	preload("res://game/car.gd"),
+]
+
+
+## All groups, for `machine`, which keeps them alive from then on.
+static func groups(machine: NeoGeoMachine) -> Array[GameRoutines]:
+	var made: Array[GameRoutines] = []
+	for script in GROUPS:
+		made.append(script.new(machine))
+	machine.set_meta(&"hand_written", made)
+	return made
+
+
+## Returns how many routines were replaced. `only` limits it to those
+## addresses, for finding which routine causes a difference.
+static func install(machine: NeoGeoMachine, only: Array[int] = []) -> int:
+	var count := 0
+	for group in groups(machine):
+		var table := group.routines()
+		for address: int in table:
+			if not only.is_empty() and not only.has(address):
+				continue
+			machine.replace_routine(address, table[address])
+			count += 1
+	return count

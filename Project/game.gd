@@ -60,9 +60,12 @@ func _ready() -> void:
 			scripted.append([parts[0], int(span[0]), int(span[1])])
 	var seedlog := ""
 	var use_sound := true
+	var hand_written := true
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--seedlog="):
 			seedlog = arg.trim_prefix("--seedlog=")
+		elif arg == "--translated":
+			hand_written = false
 		elif arg == "--no-sound":
 			use_sound = false
 		elif arg.begins_with("--topup="):
@@ -77,7 +80,7 @@ func _ready() -> void:
 	if sound != null:
 		sound.capturing = _record_path != ""
 		sound.muted = not shot_frames.is_empty()
-	machine = MachineLoader.create()
+	machine = MachineLoader.create(hand_written)
 	if machine == null or MachineLoader.load_snapshot(machine, snapshot) != OK:
 		push_error("Could not start: need the generated program and %s" % snapshot)
 		get_tree().quit(1)
@@ -203,6 +206,8 @@ func _notification(what: int) -> void:
 
 
 func _exit_tree() -> void:
+	if machine != null:
+		machine.release()
 	_finish_sound_task()
 
 

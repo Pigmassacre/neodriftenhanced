@@ -1,6 +1,7 @@
 # Neo Drift Out — Godot port
 
-A port of the Neo Geo game to Godot 4.7, verified against MAME.
+A port of the Neo Geo game to Godot 4.7, verified against MAME, on its way
+to an enhanced version (see `TODO.md`).
 
 Nothing from the game is stored in this repository. Everything the port needs
 is derived locally from your own ROM files into `data/` (ignored by git).
@@ -25,6 +26,9 @@ Keys: arrows, `Z X C V` = buttons A B C D, `1` = start, `5` = insert coin.
 
 - `Tools/recomp/` translates the game's 68000 program into GDScript
   (`data/game/code/`), one function per basic block.
+- `Project/game/` is the game hand-written in readable GDScript, routine by
+  routine, each replacing its translated original and checked against it.
+  So far: the car's driving.
 - `Project/machine/neogeo_machine.gd` is the machine that code runs on:
   registers, memory map, video registers, raster timer, interrupts.
 - `Project/video/` draws the machine's video RAM (sprites with the hardware's
@@ -43,13 +47,16 @@ include it on the next run.
 
 ```sh
 cd Tools
-python3 verify_session.py practice_steer --shots
+python3 verify_session.py practice_steer --check-routines
+python3 verify_session.py practice_steer --translated --shots
 ```
 
 This plays a scripted session in MAME, replays the same inputs in Godot from
 the same starting state, and compares work RAM after every frame and
-screenshots pixel for pixel. Sessions are defined at the top of
-`verify_session.py`.
+screenshots pixel for pixel. `--check-routines` also runs every call of a
+hand-written routine both ways and compares the outcomes. Sessions are
+defined at the top of `verify_session.py`; `Tools/routines.py` lists the
+game's routines and how far the hand-writing has come.
 
 See `HANDOFF.md` for the current state, remaining work and known traps.
 
