@@ -24,13 +24,15 @@ void vertex() {
 }
 
 void fragment() {
-	// params: sprite index, top line, vertical shrink, rows + 64 * horizontal shrink (all / 1024)
+	// params: sprite index, top line, vertical shrink, rows + 64 * horizontal shrink
+	// + 1024 if it is to be seen through (all / 1024)
 	int sprite = int(round(params.r * 1024.0));
 	int top = int(round(params.g * 1024.0));
 	int shrink_y = int(round(params.b * 1024.0));
 	int packed = int(round(params.a * 1024.0));
 	int rows = packed & 63;
-	int shrink_x = packed >> 6;
+	int shrink_x = (packed >> 6) & 15;
+	bool seen_through = packed >= 1024;
 	int offset = int(floor(UV.x));
 	int line = int(floor(UV.y));
 
@@ -95,5 +97,5 @@ void fragment() {
 	if (index == 0) {
 		discard;
 	}
-	COLOR = vec4(texelFetch(pal_tex, ivec2(index, cell.a), 0).rgb, 1.0);
+	COLOR = vec4(texelFetch(pal_tex, ivec2(index, cell.a), 0).rgb, seen_through ? 0.5 : 1.0);
 }

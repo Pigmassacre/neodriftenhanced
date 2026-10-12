@@ -77,9 +77,12 @@ const SYSTEM_MODE := 0xFD80
 const STRIP_TILES := 32
 const STRIP_BYTES := STRIP_TILES * 4
 ## Numbers kept for each strip in `strips`: x, top line, rows, the hardware's
-## shrink across (0-15) and down (0-255), and 1 if it belongs at the right
-## edge of the picture however wide that is (0 where it is).
-const STRIP_FIELDS := 6
+## shrink across (0-15) and down (0-255), 1 if it belongs at the right
+## edge of the picture however wide that is (0 where it is), and 1 if it
+## is to be seen through.
+const STRIP_FIELDS := 7
+## Marks a record in the list of those shown as one to be seen through.
+const SEEN_THROUGH := 0x10000
 ## In a race, things drawn from this depth on are the HUD's, not the
 ## course's. Those from HUD_RIGHT_START on to the right (the bar that shows
 ## how far the next checkpoint is) belong at the right edge of a wider
@@ -94,6 +97,12 @@ var machine: NeoGeoMachine
 var hardware_timing := false
 ## Leaves out what the hardware has no sprites for.
 var hardware_limits := false
+## The original has no way to draw a thing so that what is under it shows
+## through, and fakes it: the thing is shown on every other frame only (the
+## cars' shadows, and what a car has knocked over until it is gone). With
+## this, a thing shown and hidden in turn is drawn on every frame, to be
+## seen through.
+var translucency := false
 
 ## The objects to draw, a column ("strip") at a time, in drawing order, and
 ## the tiles of each: four bytes a tile as the picture has them (tile number,
@@ -126,6 +135,9 @@ var _pending_in_race := false
 var _pending_tiles := PackedByteArray()
 var _pending_ground: Array = []
 var _blank := PackedByteArray()
+## For every record, what its first word was one and two frames ago.
+var _shown_before := PackedInt32Array()
+var _shown_earlier := PackedInt32Array()
 
 
 func _init(for_machine: NeoGeoMachine) -> void:
@@ -287,16 +299,25 @@ func _long(offset: int) -> int:
 	return (machine.ram.decode_u16(offset) << 16) | machine.ram.decode_u16(offset + 2)
 
 
-## The records that are shown, lowest depth first. Equal depths come out in
-## the order the original's sort leaves them in ($133A0).
+## The records that are shown, lowest depth first, with SEEN_THROUGH set
+## for those shown and hidden in turn. Equal depths come out in the order
+## the original's sort leaves them in ($133A0).
 func _shown_in_order() -> PackedInt32Array:
 	var ram := machine.ram
 	var records := PackedInt32Array()
 	var depths := PackedInt32Array()
-	for index in SpriteObject.record_count(machine):
+	var record_count := SpriteObject.record_count(machine)
+	_shown_before.resize(record_count)
+	_shown_earlier.resize(record_count)
+	for index in record_count:
 		var record := SpriteObject.record(index) & 0xFFFF
-		if ram.decode_u16(record + SHOWN) == 1:
-			records.append(record)
+		var shown := ram.decode_u16(record + SHOWN)
+		var before := _shown_before[index]
+		var in_turn := translucency and shown + before == 3 and before + _shown_earlier[index] == 3
+		_shown_earlier[index] = before
+		_shown_before[index] = shown
+		if shown == 1 or in_turn:
+			records.append(record | (SEEN_THROUGH if in_turn else 0))
 			depths.append(ram.decode_s16(record + DEPTH))
 	var count := records.size()
 	for index in count - 1:
@@ -323,12 +344,12 @@ func _shown_in_order() -> PackedInt32Array:
 ## starts right of the screen is the row's left end.
 func _find_backdrop(records: PackedInt32Array) -> Vector2i:
 	var ram := machine.ram
-	if ram.decode_u16(GROUND_ON) != 0 or records.is_empty():
+	if ram.decode_u16(GROUND_ON) != 0 or records.is_empty() or records[0] & SEEN_THROUGH:
 		return Vector2i.ZERO
 	var depth := ram.decode_s16(records[0] + DEPTH)
 	var spans: Array[Vector2i] = []
 	for record in records:
-		if ram.decode_s16(record + DEPTH) != depth or ram.decode_u16(record + ROWS) != BACKDROP_ROWS \
+		if record & SEEN_THROUGH or ram.decode_s16(record + DEPTH) != depth or ram.decode_u16(record + ROWS) != BACKDROP_ROWS \
 				or (ram.decode_u16(record + Y) & 0x1FF) != 0 \
 				or ram.decode_u16(record + ZOOM_X) != 0x100 or ram.decode_u16(record + ZOOM_Y) != 0x100:
 			break
@@ -364,10 +385,11 @@ func _gather() -> void:
 	var race := false
 	if ram.decode_u16(GROUND_ON) != 0:
 		for record in records:
-			race = race or ram.decode_s16(record + DEPTH) >= HUD_DEPTH
+			race = race or ram.decode_s16((record & 0xFFFF) + DEPTH) >= HUD_DEPTH
 	backdrop.x = 0
 	for index in records.size():
-		var record := records[index]
+		var record := records[index] & 0xFFFF
+		var seen_through := 1 if records[index] & SEEN_THROUGH else 0
 		var columns := ram.decode_u16(record + COLUMNS)
 		if hardware_limits:
 			if columns > columns_left:
@@ -420,6 +442,7 @@ func _gather() -> void:
 			made.append(shrink_x)
 			made.append(shrink_y)
 			made.append(side)
+			made.append(seen_through)
 			x += shrink_x + 1
 			var from := body + column * column_bytes
 			var at := tiles.size()

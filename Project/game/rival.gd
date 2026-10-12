@@ -1003,7 +1003,7 @@ func draw_shadow() -> void:
 	var zoom := u16(rival + ZOOM)
 	Sprite.zoom(m, sprite, zoom, zoom)
 	var shown := u16(m.a4 + Car.SHADOW_FLICKER) == 0
-	if shown:
+	if shown or m.steady_shadows:
 		Sprite.picture(m, sprite, m.r32(u32(rival + SHADOW_PICTURES) + wrap16(u16(rival + PICTURE_DIRECTION) * 4)))
 		Sprite.place(m, sprite, u16(rival + SCREEN_X), u16(rival + SCREEN_Y))
 	Sprite.show(m, sprite, shown)
@@ -1017,7 +1017,7 @@ func draw_shadow_airborne() -> void:
 	var zoom := ((u16(rival + ZOOM) * size) >> 8) & 0xFFFF
 	Sprite.zoom(m, sprite, zoom, zoom)
 	var shown := u16(m.a4 + Car.SHADOW_FLICKER) == 0
-	if shown:
+	if shown or m.steady_shadows:
 		Sprite.picture(m, sprite, m.r32(u32(rival + SHADOW_PICTURES) + wrap16(u16(rival + PICTURE_DIRECTION) * 4)))
 		var x := u16(rival + SCREEN_X) - u16(rival + MARGIN_X) + Car._margin_at_zoom(wrap16(zoom), s16(rival + SIZE_X))
 		var y := u16(rival + SCREEN_Y) - u16(rival + MARGIN_Y) + Car._margin_at_zoom(wrap16(zoom), s16(rival + SIZE_Y))

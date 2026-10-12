@@ -1,8 +1,17 @@
 extends Node2D
 ## Runs the game: steps the machine at the hardware frame rate, feeds it the
-## keyboard and shows its video output.
+## keyboard and gamepads and shows its video output.
+##
+## The game's picture is drawn in game pixels into a viewport of its own
+## (video/neogeo_video.gd), which is shown enlarged to the window's height
+## in the middle of the window. What is drawn over it (hud/) is drawn at the
+## window's resolution.
 ##
 ## Keys: arrows steer/select, Z X C V are buttons A B C D, 1 is start, 5 inserts a coin.
+## F2 turns the picture-tube look on and off, M the map, F11 full screen.
+## Gamepad: stick or pad steers, the four buttons are A B C D (A below, B
+## right, C left, D above), the right and left triggers are A and B too,
+## Start is start and Back inserts a coin.
 ##
 ## Options after `--`:
 ##   --snapshot=PATH            machine state to start from (default data/game/start.snapshot)
@@ -15,12 +24,16 @@ extends Node2D
 ##   --shot=PATH --shot-frame=N[,N...]  save a screenshot after each of those frame
 ##                              counts (PATH may contain %d) and quit after the last;
 ##                              runs as fast as it can, with the sound muted
+##   --window-shot              screenshots are of the window, not of the game's picture alone
 ##   --frames=N                 quit after N frames, printing timing figures
 ##   --hardware-video           draw what is in video RAM, as the hardware would, instead
 ##                              of the game's own records (see video/game_scene.gd)
 ##   --keep-video-ram           draw from the game's records, but leave the original's code
 ##                              that draws to video RAM running too
 ##   --width=N                  how wide a picture to draw, instead of as wide as the window
+##   --crt                      start with the picture-tube look on
+##   --whole-pixels             enlarge the picture a whole number of times only
+##   --no-map                   start with the map off
 ##   --compare-views[=FOLDER]   draw every frame both ways, 320 pixels wide and with the
 ##                              hardware's timing and limits, and count the frames that
 ##                              differ; the first of them are saved to FOLDER
@@ -34,6 +47,13 @@ const P1_KEYS := {
 	KEY_UP: 1, KEY_DOWN: 2, KEY_LEFT: 4, KEY_RIGHT: 8, KEY_Z: 16, KEY_X: 32, KEY_C: 64, KEY_V: 128,
 }
 const P1_BITS := {"up": 1, "down": 2, "left": 4, "right": 8, "a": 16, "b": 32, "c": 64, "d": 128}
+const P1_PAD_BUTTONS := {
+	JOY_BUTTON_DPAD_UP: 1, JOY_BUTTON_DPAD_DOWN: 2, JOY_BUTTON_DPAD_LEFT: 4, JOY_BUTTON_DPAD_RIGHT: 8,
+	JOY_BUTTON_A: 16, JOY_BUTTON_B: 32, JOY_BUTTON_X: 64, JOY_BUTTON_Y: 128,
+}
+## How far a stick or trigger must be moved to count.
+const STICK_MOVED := 0.5
+const TRIGGER_PRESSED := 0.3
 
 var machine: RefCounted
 var frame := 0
@@ -58,6 +78,17 @@ var _views: Array[SubViewport] = []
 var _compared := 0
 var _differing: Array[int] = []
 var _over_limit := 0
+## The viewport the game's picture is drawn in, what shows it in the
+## window, and how many screen pixels a game pixel is.
+var _screen: SubViewport
+var _picture: TextureRect
+var _pixel := 1.0
+var _whole_pixels := false
+var _enlarge_material: ShaderMaterial
+var _crt_material: ShaderMaterial
+var _crt := false
+var _window_shots := false
+var _map: Minimap
 
 @onready var video: NeoGeoVideo = $Video
 @onready var sound: SoundBoard = $Sound
@@ -102,6 +133,12 @@ func _ready() -> void:
 			keep_video_ram = true
 		elif arg.begins_with("--width="):
 			_forced_width = int(arg.trim_prefix("--width="))
+		elif arg == "--crt":
+			_crt = true
+		elif arg == "--whole-pixels":
+			_whole_pixels = true
+		elif arg == "--window-shot":
+			_window_shots = true
 		elif arg.begins_with("--compare-views"):
 			_comparing = true
 			_compare_folder = arg.trim_prefix("--compare-views").trim_prefix("=")
@@ -120,25 +157,94 @@ func _ready() -> void:
 	video.machine = machine
 	if native_video or _comparing:
 		video.scene = GameScene.new(machine)
+		video.scene.translucency = not _comparing
+		machine.steady_shadows = hand_written and not _comparing
 		if not _comparing and not keep_video_ram:
 			video.scene.replace_hardware_drawing()
 			if hand_written:
 				Decomp.make_room(machine)
+	RenderingServer.set_default_clear_color(Color.BLACK)
 	if _comparing:
 		_set_up_comparison()
+		video.refresh()
 	else:
+		_set_up_screen()
+		_map.wanted = not OS.get_cmdline_user_args().has("--no-map")
+		_map.fades = shot_frames.is_empty()
 		get_viewport().size_changed.connect(_fit_view)
 		_fit_view()
-	video.refresh()
+		_refresh()
 
 
-## Makes the picture as wide as the window shows, in the middle of it.
+## Puts the game's picture in a viewport of its own, shown in the window
+## by `_picture`, with what is drawn over it.
+func _set_up_screen() -> void:
+	_screen = SubViewport.new()
+	_screen.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_screen.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
+	_screen.snap_2d_transforms_to_pixel = true
+	remove_child(video)
+	_screen.add_child(video)
+	add_child(_screen)
+	_picture = TextureRect.new()
+	_picture.texture = _screen.get_texture()
+	_picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_picture.stretch_mode = TextureRect.STRETCH_SCALE
+	_picture.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_picture.clip_contents = true
+	add_child(_picture)
+	_enlarge_material = ShaderMaterial.new()
+	_enlarge_material.shader = preload("res://video/enlarge.gdshader")
+	_crt_material = ShaderMaterial.new()
+	_crt_material.shader = preload("res://video/crt.gdshader")
+	_map = Minimap.new()
+	_map.machine = machine
+	_map.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_picture.add_child(_map)
+
+
+## Makes the picture as high as the window, or as wide when the window is
+## narrower than the hardware's picture, as wide as the window then shows,
+## and puts it in the middle.
 func _fit_view() -> void:
-	var shown := int(get_viewport().get_visible_rect().size.x)
-	video.view_width = mini(_forced_width if _forced_width > 0 else shown, WIDEST_VIEW)
-	video.position.x = (shown - video.view_width) / 2
+	var window := get_viewport().get_visible_rect().size
+	_pixel = minf(window.y / NeoGeoVideo.SCREEN.y, window.x / NeoGeoVideo.SCREEN.x)
+	if _whole_pixels:
+		_pixel = maxf(floorf(_pixel), 1.0)
+	var width := _forced_width if _forced_width > 0 else int(window.x / _pixel + 0.001)
+	video.view_width = mini(width, WIDEST_VIEW) & ~1
+	_screen.size = Vector2i(video.view_width, int(NeoGeoVideo.SCREEN.y))
+	_picture.size = (Vector2(_screen.size) * _pixel).round()
+	_picture.position = ((window - _picture.size) / 2).round()
+	_map.pixel = _pixel
+	_map.size = _picture.size
 	if video.scene != null:
 		machine.view_margin = video.margin()
+	_show_crt()
+
+
+func _show_crt() -> void:
+	# below three screen pixels to a line there is no room for the look
+	var on := _crt and _pixel >= 3
+	_picture.material = _crt_material if on else _enlarge_material
+	_picture.material.set_shader_parameter("picture_size", Vector2(_screen.size))
+	_enlarge_material.set_shader_parameter("scale", _pixel)
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo or _picture == null:
+		return
+	match key.physical_keycode:
+		KEY_F2:
+			_crt = not _crt
+			_show_crt()
+		KEY_M:
+			_map.wanted = not _map.wanted
+		KEY_F11:
+			var window := get_window()
+			var full := window.mode == Window.MODE_FULLSCREEN or window.mode == Window.MODE_EXCLUSIVE_FULLSCREEN
+			window.mode = Window.MODE_WINDOWED if full else Window.MODE_FULLSCREEN
 
 
 ## Puts the picture drawn from the game's records and the one drawn from
@@ -158,8 +264,7 @@ func _set_up_comparison() -> void:
 		var shown := Sprite2D.new()
 		shown.texture = viewport.get_texture()
 		shown.centered = false
-		shown.scale = Vector2(0.5, 0.5)
-		shown.position.x = _views.size() * NeoGeoVideo.SCREEN.x / 2
+		shown.position.x = _views.size() * NeoGeoVideo.SCREEN.x
 		add_child(shown)
 		_views.append(viewport)
 	_hardware_view.refresh()
@@ -224,10 +329,10 @@ func _process(delta: float) -> void:
 			shot_frames.pop_front()
 			var done := shot_frames.is_empty()
 			set_process(false)
-			video.refresh()
+			_refresh()
 			await RenderingServer.frame_post_draw
 			var path := shot_path % frame if "%d" in shot_path else shot_path
-			get_viewport().get_texture().get_image().save_png(path)
+			(get_viewport() if _window_shots else _screen).get_texture().get_image().save_png(path)
 			if done:
 				_save_recording()
 				get_tree().quit()
@@ -241,7 +346,12 @@ func _process(delta: float) -> void:
 		_step()
 		stepped = true
 	if stepped:
-		video.refresh()
+		_refresh()
+
+
+func _refresh() -> void:
+	video.refresh()
+	_map.refresh(video.hud_shown)
 
 
 func _step() -> void:
@@ -255,6 +365,27 @@ func _step() -> void:
 		start |= 1
 	if Input.is_physical_key_pressed(KEY_5):
 		coin |= 1
+	for pad in Input.get_connected_joypads():
+		for button: int in P1_PAD_BUTTONS:
+			if Input.is_joy_button_pressed(pad, button):
+				p1 |= P1_PAD_BUTTONS[button]
+		var stick := Vector2(Input.get_joy_axis(pad, JOY_AXIS_LEFT_X), Input.get_joy_axis(pad, JOY_AXIS_LEFT_Y))
+		if stick.y < -STICK_MOVED:
+			p1 |= 1
+		elif stick.y > STICK_MOVED:
+			p1 |= 2
+		if stick.x < -STICK_MOVED:
+			p1 |= 4
+		elif stick.x > STICK_MOVED:
+			p1 |= 8
+		if Input.get_joy_axis(pad, JOY_AXIS_TRIGGER_RIGHT) > TRIGGER_PRESSED:
+			p1 |= 16
+		if Input.get_joy_axis(pad, JOY_AXIS_TRIGGER_LEFT) > TRIGGER_PRESSED:
+			p1 |= 32
+		if Input.is_joy_button_pressed(pad, JOY_BUTTON_START):
+			start |= 1
+		if Input.is_joy_button_pressed(pad, JOY_BUTTON_BACK):
+			coin |= 1
 	for entry in scripted:
 		if frame >= entry[1] and frame <= entry[2]:
 			if entry[0] == "start":

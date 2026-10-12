@@ -168,7 +168,8 @@ Things learnt that the enhancements will need:
   slots and 64 sprite objects. The car's `is_on_screen` and the camera's
   look-ahead (`aim_camera`) also assume 320 by 224.
 - **The shadow is faked translucency**: `draw_shadow` shows it every other
-  frame (`SHADOW_FLICKER`).
+  frame (`SHADOW_FLICKER`). The scene draws it on every frame at half
+  strength instead, see "Translucency" under "Drawing".
 - **The other cars are never near in the recorded sessions.** They only
   look at the ground while within 800 by 384 course pixels of the camera
   (`NEAR` in `rival.gd`), are only drawn while `ON_SCREEN` (a test against
@@ -330,6 +331,46 @@ Left to do:
   two sets of ground positions are dead weight, and the picture could be
   built from the car and scenery directly instead of through the object
   records.
+
+### Translucency
+
+The original fakes a thing one can see through by showing it on every other
+frame only: the cars' shadows (the player's on one frame, the other cars'
+on the next), and scenery a car has knocked over (barrels, cones) until it
+is gone. With `GameScene.translucency`, a record whose first word has gone
+1, 2, 1 or 2, 1, 2 over the last three frames is drawn on every frame, at
+half strength (a seventh number for each strip, bit 10 of the packed word
+the sprite shader gets). It takes two frames to notice, during which the
+thing flickers as it did. Nothing else in the recorded sessions is shown
+and hidden in turn.
+
+A hidden shadow is not placed by the original; with
+`NeoGeoMachine.steady_shadows` the hand-written `draw_shadow`s place it on
+every frame. Both are off when comparing with the hardware's picture.
+
+### The window
+
+`game.gd` draws the game's picture, in game pixels, into a viewport of its
+own (`_screen`) and shows that in the window with `_picture`, enlarged to
+the window's height: by any amount, with `video/enlarge.gdshader` keeping
+game pixels sharp, or a whole number of times with `--whole-pixels`. The
+project's own stretching is off, so what is drawn over the picture is at
+the window's resolution. Screenshots (`--shot`) are of `_screen`, so they
+are in game pixels as before; `--window-shot` takes the window.
+
+- **`video/crt.gdshader`** (F2, `--crt`) is the picture-tube look:
+  scanlines with beams wider where brighter, pixels run together across,
+  a stripe mask and a little glow. Only used from three screen pixels to a
+  game pixel. Its amounts are uniforms, for an options menu to set.
+- **`hud/minimap.gd`** (M, `--no-map`) is the map in a race. The game has
+  no map of a course as a whole, so the route is the list of waypoints the
+  other cars follow (`rival.gd`), unwrapped (course positions wrap at
+  65536), and a car is put on it by its offset from the nearest waypoint.
+  The practice course has no waypoints and gets no map. It is shown while
+  `NeoGeoVideo.hud_shown`, and is not behind the CRT look.
+- **Gamepads** are read in `game.gd`'s `_step` along with the keyboard,
+  every connected pad as player 1. There is no remapping yet, and no
+  second player on keyboard or pad.
 
 ## What works, and how it was verified
 
@@ -500,10 +541,15 @@ python3 verify_session.py practice_steer --translated --compare-views   # the sc
       range of the program listing. MAME's linear listing is misaligned in
       places — the recompiler's own decoder (`Tools/recomp/m68k.py`) is the
       authority.
-14. Of the enhancements of `TODO.md`, the wide view is in, menus
-    included ("Drawing" above). The others are not: minimap, real translucency (the shadows
-    are objects shown every other frame, so a scene can draw them at half
-    strength instead), reworked menus and HUD, a CRT shader.
+14. Of the enhancements of `TODO.md`, these are in (see "Drawing" above):
+    the wide view, menus included; real translucency; the minimap; gamepads
+    (no remapping); a CRT shader. Not started: the reworked menus (which
+    need the options kept somewhere, for what are now keys and command line
+    flags: CRT look, map, whole pixels, full screen) and the reworked HUD.
+    Both can be drawn over the picture at the window's resolution like the
+    minimap; the HUD's values are in `hud.gd` and `race_clock.gd`, and the
+    original's HUD would then have to be left out of the text layer and
+    the objects (depth `$7000` and up).
 15. Generated code load time is about 5 s (6 MB of GDScript). Fine for now.
 
 ## Traps that cost time

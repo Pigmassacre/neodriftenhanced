@@ -21,12 +21,19 @@ Godot/Godot_v4.7.2-stable_linux.x86_64 --path Project
 ```
 
 Keys: arrows, `Z X C V` = buttons A B C D, `1` = start, `5` = insert coin.
+`F2` turns a CRT look on and off, `M` the map, `F11` full screen.
 
-The picture is as wide as the window (up to 640 by 224 game pixels; the
-original is 320 wide): a race shows more of the course, with the HUD at the
-edges, and other screens repeat their backdrop to the sides.
-`--resolution 1920x1080` sets the window size; after `--`, `--width=320`
-keeps the original width and `--hardware-video` draws exactly what the
+Gamepad: stick or d-pad, the four face buttons = A B C D (the triggers are
+A and B too), Start = start, Back = insert coin.
+
+The picture fills the window's height and is as wide as the window (up to
+640 by 224 game pixels; the original is 320 wide): a race shows more of the
+course, with the HUD at the edges and a map of the course, and other screens
+repeat their backdrop to the sides. Shadows are see-through instead of
+flickering. `--resolution 1920x1080` sets the window size; after `--`,
+`--width=320` keeps the original width, `--whole-pixels` enlarges the
+picture a whole number of times only, `--crt` starts with the CRT look,
+`--no-map` without the map, and `--hardware-video` draws exactly what the
 hardware would.
 
 ## How it works
@@ -47,6 +54,8 @@ hardware would.
   that turned them into hardware sprites taken out. It can also draw the
   machine's video RAM as the hardware would (sprites with the hardware's
   shrink tables, text layer, palettes), which is what is compared with MAME.
+- `Project/hud/` is what is drawn over the game's picture at the window's
+  resolution: so far the map of the course.
 - `Project/sound/` runs the game's own Z80 sound driver and synthesises what
   it plays on the sound chip (FM, square waves and noise, sampled sound).
   The chip's seventh sampled channel (ADPCM-B) makes no sound yet.

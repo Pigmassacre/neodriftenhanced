@@ -129,6 +129,10 @@ var view_margin := 0
 ## (game/course_objects.gd) and more things drawn (game/sprite_object.gd).
 ## Only the hand-written game looks at it.
 var more_room := false
+## True has the hand-written game place the cars' shadows on every frame,
+## not just on the frames it shows them on, for a picture that draws them
+## on every frame (see GameScene.translucency).
+var steady_shadows := false
 
 var input_p1 := 0
 var input_p2 := 0

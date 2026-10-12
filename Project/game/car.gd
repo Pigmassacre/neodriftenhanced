@@ -83,8 +83,8 @@ const SIZE_Y := 0x62
 ## frame, and a flag that flips each time it does.
 const SHAKE_COUNTDOWN := 0x56
 const SHAKE_PHASE := 0x58
-## Flips every frame; the shadow is only drawn on every other one, which
-## passes for a see-through shadow.
+## Flips every frame; the shadow is only shown on every other one, which
+## passes for a see-through shadow (GameScene.translucency draws it as one).
 const SHADOW_FLICKER := 0x5A
 ## The wheels show one of two pictures, swapped every other frame while moving.
 const WHEELS_COUNTDOWN := 0x5C
@@ -1559,6 +1559,8 @@ func draw_shadow() -> void:
 	Sprite.show(m, sprite, flicker != 0)
 	if flicker != 0:
 		_place_shadow(sprite, u16(car + MARGIN_X), u16(car + MARGIN_Y))
+	elif m.steady_shadows:
+		_place_hidden_shadow(sprite, u16(car + MARGIN_X), u16(car + MARGIN_Y))
 
 
 ## $EF9E: the shadow of the car in the air, smaller the higher the car is.
@@ -1579,6 +1581,8 @@ func draw_shadow_airborne() -> void:
 	Sprite.show(m, sprite, flicker != 0)
 	if flicker != 0:
 		_place_shadow(sprite, margin_x, margin_y)
+	elif m.steady_shadows:
+		_place_hidden_shadow(sprite, margin_x, margin_y)
 
 
 func _place_shadow(sprite: int, margin_x: int, margin_y: int) -> void:
@@ -1590,6 +1594,15 @@ func _place_shadow(sprite: int, margin_x: int, margin_y: int) -> void:
 	Sprite.place(m, sprite, x, y)
 	m.a3 = picture
 	m.d2 = with_low16(m.d2, y)
+
+
+## Places the shadow on a frame the original leaves it hidden on, changing
+## nothing else.
+func _place_hidden_shadow(sprite: int, margin_x: int, margin_y: int) -> void:
+	var saved := [m.a3, m.d2]
+	_place_shadow(sprite, margin_x, margin_y)
+	m.a3 = saved[0]
+	m.d2 = saved[1]
 
 
 ## $F0AA: the wheels, turned the way the car is steered.

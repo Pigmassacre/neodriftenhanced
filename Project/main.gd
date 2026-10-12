@@ -18,6 +18,11 @@ var shot_path := ""
 
 
 func _ready() -> void:
+	# the project leaves the window unscaled (game.gd enlarges its own picture)
+	var window := get_window()
+	window.content_scale_size = Vector2i(320, 224)
+	window.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT
+	window.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 	if data.load_course("practice") != OK:
 		get_tree().quit(1)
 		return

@@ -67,6 +67,10 @@ var view_width := int(SCREEN.x):
 		view_width = clampi(value, int(SCREEN.x), WIDEST_VIEW)
 		_lay_out()
 
+## True while a race's HUD is shown: in a race, drawn from the game's
+## records, and not while the game blacks the screen out.
+var hud_shown := false
+
 var _colours := PackedInt32Array()
 var _palette_bytes := PackedByteArray()
 var _palette_tex: ImageTexture
@@ -269,7 +273,7 @@ func _build_colour_table() -> void:
 ## One quad for a sprite strip between two raster lines.
 func _add_strip(points: PackedVector2Array, colours: PackedColorArray, uvs: PackedVector2Array,
 		indices: PackedInt32Array, sprite: int, left: int, from_line: int, to_line: int,
-		top: int, shrink_y: int, rows: int, shrink_x: int) -> void:
+		top: int, shrink_y: int, rows: int, shrink_x: int, seen_through := 0) -> void:
 	if to_line <= from_line or rows == 0:
 		return
 	var first := points.size()
@@ -284,7 +288,7 @@ func _add_strip(points: PackedVector2Array, colours: PackedColorArray, uvs: Pack
 	uvs.append(Vector2(16, to_line))
 	uvs.append(Vector2(0, to_line))
 	var params := Color(sprite / PARAM_SCALE, top / PARAM_SCALE, shrink_y / PARAM_SCALE,
-			(rows + shrink_x * 64) / PARAM_SCALE)
+			(rows + shrink_x * 64 + seen_through * 1024) / PARAM_SCALE)
 	for corner in 4:
 		colours.append(params)
 	indices.append_array([first, first + 1, first + 2, first, first + 2, first + 3])
@@ -424,6 +428,7 @@ func refresh() -> void:
 	_sprite_material.set_shader_parameter("auto_anim", machine.auto_anim_counter)
 	_sprite_material.set_shader_parameter("auto_anim_enabled", (machine.lspc_mode & 8) == 0)
 	var covered := _draw_text()
+	hud_shown = from_scene and scene.in_race and scene.ground_on and not covered
 	var in_race := from_scene and scene.in_race and scene.ground_on and view_width > int(SCREEN.x)
 	# the HUD goes to the picture's edges, but not while the game is
 	# blacking the screen out with the same layer
@@ -639,7 +644,7 @@ func _draw_scene(spread: int) -> void:
 		if x >= right or x + 16 <= left:
 			continue
 		_add_strip(points[to], colours[to], uvs[to], indices[to], strip, x, first_line, last_line,
-				top & 0x1FF, strips[at + 4], rows, strips[at + 3])
+				top & 0x1FF, strips[at + 4], rows, strips[at + 3], strips[at + 6])
 	var bytes := scene.strip_tiles.slice(0, count * GameScene.STRIP_BYTES)
 	bytes.resize(_strip_bytes.size())
 	_strips_tex.update(Image.create_from_data(

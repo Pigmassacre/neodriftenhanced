@@ -2,15 +2,15 @@
 
 ## When static recomp is finished
 
-- Actual decompilation, not just a static recompilation
+- Actual decompilation, not just a static recompilation (under way)
 
 ## When decomp is finished
 
-- Widescreen/ultrawide support
-- Widescreen/ultrawide support in menus as well (the background should keep repeating)
-- Actual translucency instead of faked (render every other frame) translucency
-- Minimap
-- Reworked menus
+- [x] Widescreen/ultrawide support
+- [x] Widescreen/ultrawide support in menus as well (the background should keep repeating)
+- [x] Actual translucency instead of faked (render every other frame) translucency
+- [x] Minimap
+- [ ] Reworked menus
   - New main menu
     - Arcade mode
     - Freeplay mode (select any stage)
@@ -21,10 +21,10 @@
     - Audio sliders
     - other options
   - Quit to desktop
-- Gamepad support
-- Reworked HUD, toggleable
+- [x] Gamepad support (remapping comes with the options menu)
+- [ ] Reworked HUD, toggleable
   - Not pixel art
-- CRT shader option
+- [x] CRT shader option (F2 for now; into the options menu later)
 
 ## Future stuff
 
