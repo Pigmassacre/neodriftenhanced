@@ -9,8 +9,8 @@ extends RefCounted
 ## takes no CPU time, and where the game's work for a frame does not fit in
 ## the frame that changes what happens. So the run as a whole can still be
 ## compared with MAME, and shows up a caller that reads a scratch register.
-## A call that an interrupt arrives in is left to the original alone, since
-## hand-written code cannot be interrupted part way.
+## A call that an interrupt arrives in is left to the original, which just
+## goes on, since hand-written code cannot be interrupted part way.
 ##
 ## The stack below the routine's return address is not compared: the original
 ## leaves return addresses and saved registers there that nothing reads.
@@ -29,14 +29,21 @@ const TIMED_STATE: Array[StringName] = [&"cyc", &"timer_fire_cyc", &"irq1_pendin
 		&"recheck", &"event_cyc"]
 const DEAD_STACK := 0x200
 const MAX_BLOCKS := 2000000
+const MAX_VARIED_BLOCKS := 100000
+## Every how many calls of a routine with variations one of them is tried.
+const VARY_EVERY := 4
+const INTERRUPTED := -1
+const FAILED := -2
 const MAX_REPORTS := 5
 
 var machine: NeoGeoMachine
-## Per routine address: [name, calls, mismatches, calls an interrupt fell in].
+## Per routine address: [name, calls, mismatches, calls an interrupt fell in,
+## varied calls compared, varied calls the original could not run].
 var results := {}
 var frame := 0
-var _depth := 0
 var _in_hand_written := false
+var _varying := false
+var _stopped_at := 0
 # Copies of video RAM and the palettes as they were when `video_writes` was
 # `_video_copied`: they are large and seldom written, so states share them.
 var _vram := PackedInt32Array()
@@ -52,8 +59,9 @@ func install() -> int:
 	for group in Decomp.groups(machine):
 		var table := group.routines()
 		var scratch := group.scratch()
+		var variations := group.variations()
 		for address: int in table:
-			_check(address, table[address], scratch.get(address, []))
+			_check(address, table[address], scratch.get(address, []), variations.get(address, []))
 	return results.size()
 
 
@@ -63,14 +71,15 @@ func report() -> bool:
 		var entry: Array = results[address]
 		if entry[2] > 0:
 			good = false
-		print("routine %06X %s: %d calls, %d differ%s" % [address, entry[0], entry[1], entry[2],
-				", %d left to the original (interrupted)" % entry[3] if entry[3] > 0 else ""])
+		print("routine %06X %s: %d calls, %d differ%s%s" % [address, entry[0], entry[1], entry[2],
+				", %d left to the original (interrupted)" % entry[3] if entry[3] > 0 else "",
+				", %d varied (%d more not run)" % [entry[4], entry[5]] if entry[4] + entry[5] > 0 else ""])
 	return good
 
 
-func _check(address: int, routine: Callable, scratch: Array) -> void:
+func _check(address: int, routine: Callable, scratch: Array, varied: Array) -> void:
 	var original := machine.block(address)
-	var entry := [routine.get_method(), 0, 0, 0]
+	var entry := [routine.get_method(), 0, 0, 0, 0, 0]
 	results[address] = entry
 	# what to compare of each register: all of it, its low word, or nothing
 	var compared := {}
@@ -93,31 +102,23 @@ func _check(address: int, routine: Callable, scratch: Array) -> void:
 		entry[1] += 1
 		var before := _save()
 		var stack := machine.a7
-		var back := machine.r32(stack) & 0xFFFFFF
 		var due := machine.event_cyc
-		_depth += 1
-		var pc: int = original.call()
-		var blocks := 0
-		while not (pc == back and machine.a7 == ((stack + 4) & 0xFFFFFFFF)):
-			var code: Variant = machine._table.get(pc)
-			blocks += 1
-			if code == null or machine.halted or blocks > MAX_BLOCKS:
-				push_error("routine %06X did not return (at %06X)" % [address, pc])
-				machine.halted = true
-				_depth -= 1
-				return pc
-			pc = code.call()
-			if machine.cyc >= due and not machine.halted:
-				# An interrupt arrives inside the routine. Hand-written code
-				# cannot be interrupted, so this call is left to the original,
-				# one block at a time as usual; the routines it calls are
-				# still checked. (The original may even be waiting for the
-				# interrupt.)
-				return _leave_to_original(entry, before, original)
-		_depth -= 1
-		if machine.cyc >= due or (machine.recheck and _interrupt_waits()):
-			_depth += 1
-			return _leave_to_original(entry, before, original)
+		if not varied.is_empty() and not _varying and entry[1] % VARY_EVERY == 0:
+			_vary(address, entry, routine, original, compared, varied[(entry[1] / VARY_EVERY) % varied.size()], before)
+		var pc := _run(original, stack, due, MAX_BLOCKS)
+		if pc == FAILED:
+			if not _varying:
+				push_error("routine %06X did not return (at %06X)" % [address, _stopped_at])
+			machine.halted = true
+			return _stopped_at
+		if pc == INTERRUPTED or _interrupt_due(due):
+			# An interrupt arrives inside the routine. Hand-written code
+			# cannot be interrupted, so this call is left to the original:
+			# it simply goes on from here, block by block as usual, and the
+			# routines it has called and goes on to call are still checked.
+			# (The original may even be waiting for the interrupt.)
+			entry[3] += 1
+			return _stopped_at if pc == INTERRUPTED else pc
 		var wanted := _save()
 		# what the original logged, with the times it logged them at
 		var sound_times := machine.sound_log_times.slice(before[&"sound"])
@@ -132,8 +133,9 @@ func _check(address: int, routine: Callable, scratch: Array) -> void:
 		if difference != "":
 			entry[2] += 1
 			if entry[2] <= MAX_REPORTS:
-				print("routine %06X %s, frame %d, call %d: %s\n  entered with %s" % [
-						address, entry[0], frame, entry[1], difference, _registers(before)])
+				print("routine %06X %s, frame %d, call %d%s: %s\n  entered with %s" % [
+						address, entry[0], frame, entry[1], " (in a varied call)" if _varying else "",
+						difference, _registers(before)])
 		for name in TIMED_STATE:
 			machine.set(name, wanted[name])
 		if difference == "":
@@ -144,6 +146,63 @@ func _check(address: int, routine: Callable, scratch: Array) -> void:
 		machine.midframe_text.resize(before[&"midframe_text"])
 		machine.midframe_text.append_array(moved_text)
 		return pc)
+
+
+## Runs the original from its first block until it returns to its caller.
+## Gives the address it returned to, INTERRUPTED once an interrupt is due,
+## or FAILED where it ran into code that is not there or never returned.
+func _run(original: Callable, stack: int, due: int, most_blocks: int) -> int:
+	var back := machine.r32(stack) & 0xFFFFFF
+	var pc: int = original.call()
+	var blocks := 0
+	while not (pc == back and machine.a7 == ((stack + 4) & 0xFFFFFFFF)):
+		_stopped_at = pc
+		if _interrupt_due(due) and not machine.halted:
+			return INTERRUPTED
+		var code: Variant = machine._table.get(pc)
+		blocks += 1
+		if code == null or machine.halted or blocks > most_blocks:
+			return FAILED
+		pc = code.call()
+	return pc
+
+
+## Would the machine take an interrupt before the next block?
+func _interrupt_due(due: int) -> bool:
+	return machine.cyc >= due or (machine.recheck and (machine.irq1_pending or machine.irq2_pending))
+
+
+## Compares the two once more from a state the session did not reach:
+## `change` alters the state the routine is entered with, to take it down
+## branches no recorded session takes. Nothing of it is kept.
+func _vary(routine_address: int, entry: Array, routine: Callable, original: Callable, compared: Dictionary,
+		change: Callable, before: Dictionary) -> void:
+	_varying = true
+	change.call()
+	var start := _save()
+	var stack := machine.a7
+	var pc := _run(original, stack, machine.event_cyc, MAX_VARIED_BLOCKS)
+	if pc < 0 or _interrupt_due(start[&"event_cyc"]):
+		# the original cannot cope with this state, or an interrupt is due
+		entry[5] += 1
+		machine.halted = false
+		machine.missing_block = -1
+	else:
+		entry[4] += 1
+		var wanted := _save()
+		_restore(start)
+		_in_hand_written = true
+		routine.call()
+		_in_hand_written = false
+		machine.a7 = (machine.a7 + 4) & 0xFFFFFFFF
+		var difference := _compare(wanted, compared, stack)
+		if difference != "":
+			entry[2] += 1
+			if entry[2] <= MAX_REPORTS:
+				print("routine %06X %s, frame %d, call %d varied: %s\n  entered with %s" % [
+						routine_address, entry[0], frame, entry[1], difference, _registers(start)])
+	_restore(before)
+	_varying = false
 
 
 func _save() -> Dictionary:
@@ -221,14 +280,3 @@ func _registers(state: Dictionary) -> String:
 	for name in REGISTERS:
 		text.append("%s=%X" % [name, state[name]])
 	return " ".join(text)
-
-
-func _interrupt_waits() -> bool:
-	return machine.irq1_pending or machine.irq2_pending
-
-
-func _leave_to_original(entry: Array, before: Dictionary, original: Callable) -> int:
-	_depth -= 1
-	entry[3] += 1
-	_restore(before)
-	return original.call()

@@ -13,6 +13,12 @@ const GROUPS: Array[GDScript] = [
 	preload("res://game/race_clock.gd"),
 	preload("res://game/engine_sound.gd"),
 	preload("res://game/race.gd"),
+	preload("res://game/angles.gd"),
+	preload("res://game/rival.gd"),
+	preload("res://game/text.gd"),
+	preload("res://game/hud.gd"),
+	preload("res://game/course_signs.gd"),
+	preload("res://game/game_flow.gd"),
 ]
 
 

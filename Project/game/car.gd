@@ -2,7 +2,7 @@ extends GameRoutines
 ## The car: one frame of driving, from the controls to the camera.
 ##
 ## Every routine here works on the car object that register A6 points at
-## (the player's car is at $101500). The main routine of the normal driving
+## (the player's car is at $101508). The main routine of the normal driving
 ## state ($DAAC) calls them in the order they appear here.
 ##
 ## Field names are what the code here shows them to be used for; fields only
@@ -263,7 +263,7 @@ const COUNT_DOWN_CLOCK := 0x16A44
 const GAIN_TIME := 0x16AA8
 const SHOW_CHECKPOINT_SIGN := 0x149BA
 const ENGINE_SOUND := 0xFA18
-const SLOW_GROUND_SOUND := 0xFC9E
+const SHOW_SLOW_GROUND := 0xFC9E
 ## Puts an effect on the course: x in D0, y in D2, $80 in D1, kind in D3.
 const ADD_EFFECT := 0x1458C
 const EFFECT_SPARKS := 6
@@ -480,7 +480,7 @@ func update() -> void:
 	slide_sound()
 	m.call_routine(ENGINE_SOUND)
 	squeal_pulling_away()
-	m.call_routine(SLOW_GROUND_SOUND)
+	m.call_routine(SHOW_SLOW_GROUND)
 	wear_down()
 	report()
 	m.d0 = with_low16(m.d0, 1)

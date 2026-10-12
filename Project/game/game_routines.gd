@@ -35,6 +35,14 @@ func scratch() -> Dictionary:
 	return {}
 
 
+## Per address, ways to alter the state a routine is entered with (callables
+## that change work RAM or registers). The check also compares the routine
+## with its original from such states now and then, which covers branches no
+## recorded session takes. The game itself never runs them.
+func variations() -> Dictionary:
+	return {}
+
+
 # Work RAM by bus address ($100000-$10FFFF), big-endian as the game sees it.
 
 func u8(address: int) -> int:

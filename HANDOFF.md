@@ -21,9 +21,12 @@ decompilation needs it.
    whole game runs.
 2. Keep rendering, input and audio native Godot.
 3. Hand-write the game routine by routine in `Project/game/`, each checked
-   against its translated original. **Under way**: 110 routines (2396 of
-   16729 instructions): the car and its engine sound, the things on the
-   course, the ground lookup, the race clock, the sound queue.
+   against its translated original. **Under way**: 210 routines (3835 of the
+   16729 instructions that run in the recorded sessions): the whole race
+   but for drawing (the car and its engine sound, the other cars, the
+   things on the course, the ground lookup, the race clock, the HUD) and
+   the state machines above it. What is left of the race is the sprite
+   builder and the ground drawing, which a native renderer replaces.
 
 Nothing derived from the ROMs may be committed: `data/`, `neodrift/` and
 `neogeo/` are git-ignored on purpose. The hand-written code in
@@ -85,13 +88,30 @@ block as usual (the report says how many; the routines it calls are still
 checked), and a routine called by a hand-written routine that is itself
 being checked is not checked a second time. What depends on time (cycle
 count, raster timer, logged times) is taken from the original's run.
-**State: all 110 routines agree on every call of all nine sessions (8.7
-million calls), and the sessions match MAME exactly as far as the
-translation alone does.** Branches that no session takes are unchecked,
-though: the listing marks them "ran 0 times" (driving backwards through a
-gate, for one). A session that takes them is the way to check them.
+**State: all 210 routines agree on every call of all nine sessions, and the
+sessions match MAME exactly as far as the translation alone does.**
 
-Checking all nine sessions takes about five minutes with the sessions run
+Branches that no session takes are checked through **variations**: a group
+may give, per routine, ways to alter the state the routine is entered with
+(`variations()` in `game_routines.gd`; `rival.gd` and `hud.gd` have
+examples). On every fourth call of such a routine the check also compares
+original and hand-written from one of those states and then throws the
+outcome away, so the session itself is not affected. Routines the original
+calls during a varied call are checked as usual, which pins a difference
+to the routine it is in. The report counts the varied calls, and those the
+original could not run from that state ("more not run": it ran into
+untranslated code or an interrupt was due). This is how the other cars
+were checked on screen, in the air, spinning and touching the player's
+car: no recorded session has any of that. Branches without a variation
+are still unchecked; the listing marks them "ran 0 times".
+
+Never compared so far, though simple: in `game_flow.gd` the states that set
+up a long screen (an interrupt always arrives in them: car choice, course
+introduction, result, continue, ending, name entry) and those no session
+reaches (name entry for one of the three best times, choosing a car after
+continuing, pausing on a home console); `wait` in `rival.gd`.
+
+Checking all nine sessions takes about ten minutes with the sessions run
 side by side (one `verify_session.py <session> --keep-recording
 --check-routines` each, in the background); never run the same session
 twice at once, they share their output files.
@@ -105,13 +125,19 @@ What is known so far is in the code, `Project/game/`:
 
 | File | What it is | Routines |
 |---|---|---|
-| `car.gd` | The player's car (object at `$101508`, in A6): one frame of it (`$D956`), normal driving (`$DAAC`), spinning (`$DBF0`, `$DDA4`), flying (`$DFC8`), drawing it, the camera, damage, dust, skid marks, sparks, backfire, and its sounds | 72 |
-| `engine_sound.gd` | Gears by speed and the notes they ask for | 7 |
+| `game_flow.gd` | The three state machines above a race: the game (car choice, courses, ending, name entry), the courses of a game (introduction, race, result, continue) and the race (start, driving, finish, pause) | 38 |
 | `race.gd` | The order of a race's frame (`$B844`) | 2 |
+| `car.gd` | The player's car (object at `$101508`, in A6): one frame of it (`$D956`), normal driving (`$DAAC`), spinning (`$DBF0`, `$DDA4`), flying (`$DFC8`), drawing it, the camera, damage, dust, skid marks, sparks, backfire, and its sounds | 72 |
+| `rival.gd` | The three other cars (`$10126C`, `$D8` bytes each): steering along waypoints, the same grip and sliding as the player's car, spinning, flying, touching the player's car, drawing, dust and sparks | 48 |
+| `engine_sound.gd` | Gears by speed and the notes they ask for | 7 |
 | `race_clock.gd` | Time left, time gained at checkpoints, times taken | 5 |
+| `hud.gd` | Time taken, time left (with the voice counting down), speed, the bar to the next checkpoint, the slow-ground warning | 7 |
+| `course_signs.gd` | Signs the course brings up where the car drives into a marked cell | 3 |
 | `course_objects.gd` | Scenery and effects on the course: 24 slots, kept for a window around the camera | 15 |
 | `sprite_object.gd` | The setters of the records things are drawn from | 5 |
+| `text.gd` | The text layer: drawing a block of cells and writing characters | 3 |
 | `ground.gd` | The ground code under a point (`$13E74`), with the packed block format | 1 |
+| `angles.gd` | The direction of a vector (`$1014C`) | 1 |
 | `sound_requests.gd` | Asking for a sound and sending it on from the interrupt | 2 |
 | `random.gd` | The random number step | 1 |
 
@@ -141,6 +167,19 @@ Things learnt that the enhancements will need:
   look-ahead (`aim_camera`) also assume 320 by 224.
 - **The shadow is faked translucency**: `draw_shadow` shows it every other
   frame (`SHADOW_FLICKER`).
+- **The other cars are never near in the recorded sessions.** They only
+  look at the ground while within 800 by 384 course pixels of the camera
+  (`NEAR` in `rival.gd`), are only drawn while `ON_SCREEN` (a test against
+  320 by 224 with a margin), and far away they drive on plain road. A wider
+  view needs both tests widened. Their shadows are drawn on the frames on
+  which the player's car has none.
+- **The HUD is text-layer cells at fixed addresses** (`hud.gd` has them as
+  constants) plus three sprite objects for the checkpoint bar. Times are
+  counts of frames in 16.16 fixed point (`race_clock.gd`); the speed shown
+  comes from a table by sixteenths of the car's speed. A reworked HUD can
+  read the same values and leave these routines out.
+- **A home console pauses with the start button** (`race_pause` in
+  `game_flow.gd`); an arcade board does not, and continues with credits.
 - Rules found on the way: when the time runs out (`TIME_UP`) the race goes
   on to the next gate; scraping walls wears the car down in four stages
   that lower its top speed (`wear_down`); `leave_skid_marks` in one case
@@ -149,21 +188,26 @@ Things learnt that the enhancements will need:
 
 Where to go next, roughly in this order:
 
-1. What the race's frame (`race.gd`) calls that is still translated: the
-   other three cars at `$10126C` (`$C558`-`$D1EE`, some 20 routines run for
-   each every frame; a simpler copy of the player's car, object size
-   `$D8`), the HUD on the text layer (`$FE0A` time taken, `$FECC` time
-   left, `$100D2` speed, `$19F82` progress bar, `$FC9E` slow-ground sign;
-   all draw through `$10052`/`$10082`/`$11A34`), and `$14760`.
-2. The remaining kinds of scenery (`$16BF2` is the one a car knocks over,
-   `$16E62` moves across; their set-up stubs from `$16FEA` on all end in
-   `$16B04`) and the other driving states of the table at `$DA72` that no
-   session reaches.
-3. The states above the race (`$B064`, `$B2BE`, `$B648`: tables of
-   routines per game state), menus, attract mode, ending.
-4. The sprite builder and ground code are replaced by a native renderer
-   rather than decompiled (see above); that is the first enhancement and
-   can be started alongside.
+1. The sprite builder and the ground code are replaced by a native
+   renderer rather than decompiled (see above). With the race itself now
+   hand-written, this is the first enhancement and the next thing to do:
+   draw the ground from `GROUND_CAMERA`/`GROUND_ZOOM` as the course viewer
+   does, the sprite objects from their records, and the text layer, then
+   widen the view (the scenery window, `NEAR`/`ON_SCREEN` of the other
+   cars, `is_on_screen` and the camera's look-ahead).
+2. What `game_flow.gd` still calls by address: the screens around a race
+   (car choice `$15C20`/`$15C9C`, course introduction `$1BE56`/`$1C374`,
+   start `$B978`/`$B98C`, finish `$BE50`/`$BE90`, result `$4150`/`$4248`,
+   continue `$15282`/`$15354`, ending `$4B8A`/`$4CB4`, game over, name
+   entry, best times). These are what "reworked menus" will replace or
+   rewrite.
+3. Left in the race: the remaining kinds of scenery (`$16BF2` is the one a
+   car knocks over, `$16E62` moves across; their set-up stubs from `$16FEA`
+   on all end in `$16B04`), what plays a course sign (`$14804`, `$1485C`),
+   the driving states of the table at `$DA72` that no session reaches, and
+   what the car-touching test calls (`$1A962`, `$1A9A6`). Write variations
+   for what no session reaches.
+4. The main loop and the attract mode.
 
 Three things to know:
 
