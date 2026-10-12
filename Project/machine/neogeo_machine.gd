@@ -120,6 +120,11 @@ var irq1_pending := false
 var irq2_pending := false
 
 # inputs (active high here; inverted on the bus)
+## How many pixels of picture are drawn to each side of the hardware's 320
+## (see NeoGeoVideo.view_width). The hand-written game routines that test
+## whether something is in sight allow for it; 0 is the original.
+var view_margin := 0
+
 var input_p1 := 0
 var input_p2 := 0
 var input_start := 0

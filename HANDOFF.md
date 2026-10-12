@@ -25,8 +25,10 @@ decompilation needs it.
    16729 instructions that run in the recorded sessions): the whole race
    but for drawing (the car and its engine sound, the other cars, the
    things on the course, the ground lookup, the race clock, the HUD) and
-   the state machines above it. What is left of the race is the sprite
-   builder and the ground drawing, which a native renderer replaces.
+   the state machines above it.
+4. Draw from the game's own records instead of the hardware's video RAM.
+   **Done** (see "Drawing" below): the sprite builder and the ground code
+   are no longer run by the game, and a race is drawn up to 640 pixels wide.
 
 Nothing derived from the ROMs may be committed: `data/`, `neodrift/` and
 `neogeo/` are git-ignored on purpose. The hand-written code in
@@ -158,8 +160,8 @@ Things learnt that the enhancements will need:
   camera crosses 16 pixels, `$13646` sets positions in the vertical blank,
   and the raster interrupt `$136BA` wraps it vertically). It is drawn from
   `GROUND_CAMERA` and `GROUND_ZOOM` (`car.gd`), which is all the standalone
-  course viewer (`Project/main.tscn`) needs. This code is tied to the
-  hardware and is to be replaced by native drawing, not rewritten.
+  course viewer (`Project/main.tscn`) needs. The game no longer runs this
+  code; see "Drawing" below.
 - **A wider view needs a wider window for scenery**: `course_objects.gd`
   keeps things only within 512 by 512 course pixels around the camera
   (`WINDOW_LEFT`, `WINDOW_ABOVE`, `WINDOW_SPAN`), and there are only 24
@@ -188,13 +190,7 @@ Things learnt that the enhancements will need:
 
 Where to go next, roughly in this order:
 
-1. The sprite builder and the ground code are replaced by a native
-   renderer rather than decompiled (see above). With the race itself now
-   hand-written, this is the first enhancement and the next thing to do:
-   draw the ground from `GROUND_CAMERA`/`GROUND_ZOOM` as the course viewer
-   does, the sprite objects from their records, and the text layer, then
-   widen the view (the scenery window, `NEAR`/`ON_SCREEN` of the other
-   cars, `is_on_screen` and the camera's look-ahead).
+1. Finish the wide view, see "Left to do" under "Drawing" below.
 2. What `game_flow.gd` still calls by address: the screens around a race
    (car choice `$15C20`/`$15C9C`, course introduction `$1BE56`/`$1C374`,
    start `$B978`/`$B98C`, finish `$BE50`/`$BE90`, result `$4150`/`$4248`,
@@ -226,6 +222,88 @@ Three things to know:
 - A new script in `Project/game/` goes into `Decomp.GROUPS`. `routines.py`
   finds hand-written routines by lines of the form `<tab><tab>0xADDR: name,`
   in `routines()`.
+
+## Drawing
+
+`Project/video/game_scene.gd` (`GameScene`) takes what the game wants drawn
+at the moments it hands it to the hardware, and `NeoGeoVideo` draws that
+instead of video RAM while the game has the screen (bit 7 of `$10FD80`; the
+system ROM's own screens are still drawn from video RAM):
+
+- **Objects.** At the sprite builder's entry (`$1229E`) the shown records
+  are sorted as the original sorts them and turned into "strips", one for
+  each column of each picture, with the original's arithmetic for zoom
+  (`_gather`). A strip is what a hardware sprite was, so the same shader
+  draws both, but there can be any number of them, anywhere.
+- **The ground.** At `$13546` the camera, the zoom and the course's map are
+  noted. `NeoGeoVideo._look_up_ground` works out, for every pixel across
+  and every line down, which tile of the map and which pixel of it is
+  there, exactly as the original's 32 hardware sprites and the hardware's
+  shrink tables would show it, and carries on the same way to the sides.
+  `ground.gdshader` then draws from the map itself (`_load_map` makes
+  textures of it when the course changes).
+- **Text** is still the hardware's text layer, read from video RAM.
+- **Colours**: the game queues colour changes for the vertical blank;
+  `colours_to_come` applies those not yet taken, as they belong to the
+  picture just built.
+
+Two ways of running it:
+
+- The game (`game.gd`) calls `replace_hardware_drawing`: the original's
+  `$1229E`, `$1348E` and `$13546` are replaced by code that only notes the
+  scene. Video RAM then has no game picture at all, a frame takes about
+  half the time (1.5 ms instead of 3.2), and the picture is shown as soon
+  as it is built, a frame earlier than the hardware would. Work RAM is then
+  not what MAME has (the builder's buffers stay empty), so this is not
+  used when verifying. `--keep-video-ram` leaves the original code in too;
+  `--hardware-video` draws video RAM only.
+- For checking, `verify_session.py <session> --translated --compare-views`
+  runs the game with both pictures drawn every frame, the scene with the
+  hardware's timing and limits (`hardware_timing`: taken at the vertical
+  blank after it is built; `hardware_limits`: 128 columns), and compares
+  them pixel for pixel. It needs a display. **State: over all nine sessions
+  (67,000 frames) the two are identical but for about 60 frames**, all of
+  three kinds: the frame of a screen change, where the hardware picture is
+  cut part way down; the ground's bottom few lines on single frames (the
+  original's raster split arriving late); and the first frames of a
+  session, before the scene has been built once. Frames where the hardware
+  ran out of sprites on a line (about 100) are counted apart: the scene
+  has no such limit.
+
+The wide view: `NeoGeoVideo.view_width` (the window's width in game pixels,
+at most `WIDEST_VIEW` in `game.gd`). The hardware's 320 pixels are the
+middle of it, so everything the game places is where it was. Only a race
+(while the ground is drawn) uses the extra width; other screens get black
+bars, because they park things just off the hardware's screen. Outside a
+race, object positions are also wrapped to nine bits as the hardware does,
+which the menus' backgrounds rely on. The machine's `view_margin` tells the
+hand-written game code how much wider the picture is: the scenery window
+(`course_objects.gd`), the other cars' `ON_SCREEN` and the car's
+`is_on_screen` allow for it. With 0 they are the original, which is what
+the routine check runs.
+
+Left to do:
+
+- **The 24 scenery slots run out more often in a wide view** (in 150 of
+  5000 frames of Stage 4 at 640 wide, against 6 at 320), and what does not
+  get a slot is missing until it scrolls in again. Stage 1 also shows 63
+  of the 64 object records in use. Both tables are fixed places in work
+  RAM (`$102C0C`, `$101B20`) that translated code refers to; moving them
+  needs the routines that do (the scenery kinds' set-up from `$16FEA`,
+  `$12202`, `$120E0`) hand-written first.
+- The HUD is the text layer in the middle 320 pixels. The first and last
+  text columns, which the game fills with black to hide the ground's
+  edges, are left out in a wide view (`open_sides` in `fix.gdshader`).
+- A change of the window's width in mid-race does not search the newly
+  shown strips of course for scenery; it turns up as the camera moves.
+- The camera still frames the car for 320 pixels (`aim_camera`).
+- Never looked at in a wide view: the other cars (no session has them on
+  screen), anything in a race that is placed in hardware coordinates and
+  relied on being off screen. Stage 1 was looked at; the other stages not.
+- With the builder gone, `show_course`'s test for a camera jump and the
+  two sets of ground positions are dead weight, and the picture could be
+  built from the car and scenery directly instead of through the 64
+  records.
 
 ## What works, and how it was verified
 
@@ -265,6 +343,7 @@ Three things to know:
 cd Tools
 python3 verify_session.py practice_steer --keep-recording --check-routines   # hand-written routines
 python3 verify_session.py practice_steer --translated --shots   # the machine: RAM + screenshots vs MAME
+python3 verify_session.py practice_steer --translated --compare-views   # the scene against video RAM
 ```
 
 - Sessions (scripted inputs) are defined at the top of `verify_session.py`.
@@ -395,10 +474,10 @@ python3 verify_session.py practice_steer --translated --shots   # the machine: R
       range of the program listing. MAME's linear listing is misaligned in
       places — the recompiler's own decoder (`Tools/recomp/m68k.py`) is the
       authority.
-14. The enhancements of `TODO.md` come after the decompilation, but the
-    wide view can be prepared: the course viewer above draws the background
-    from map data at any size, and the car code now names the camera and
-    zoom fields it needs.
+14. Of the enhancements of `TODO.md`, the wide view is begun ("Drawing"
+    above). The others are not: minimap, real translucency (the shadows
+    are objects shown every other frame, so a scene can draw them at half
+    strength instead), reworked menus and HUD, a CRT shader.
 15. Generated code load time is about 5 s (6 MB of GDScript). Fine for now.
 
 ## Traps that cost time

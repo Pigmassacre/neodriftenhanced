@@ -692,7 +692,7 @@ func is_on_screen() -> void:
 	var car := m.a6
 	var x := s16(car + SCREEN_X)
 	var y := s16(car + SCREEN_Y)
-	var seen := x >= -0x40 and x <= 0x17F and y >= -0x40 and y <= 0x140
+	var seen := x >= -0x40 - m.view_margin and x <= 0x17F + m.view_margin and y >= -0x40 and y <= 0x140
 	m.d0 = with_low16(m.d0, 1 if seen else 0)
 
 

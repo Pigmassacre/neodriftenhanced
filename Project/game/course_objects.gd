@@ -74,6 +74,9 @@ const SLOTS_TO_GO := 0x103248
 const WINDOW_LEFT := 0x28
 const WINDOW_ABOVE := 0x54
 const WINDOW_SPAN := 0x1FF
+## The furthest the camera zooms out (8.8), for how much of the course a
+## wider picture shows.
+const FURTHEST_ZOOM := 0xB8
 
 # --- effects -----------------------------------------------------------------
 
@@ -259,9 +262,11 @@ func keep_window() -> void:
 
 
 func _set_window(window: int, camera: int) -> void:
-	set16(window, u16(camera + CAMERA_X) - WINDOW_LEFT)
+	# a wider picture than the original's needs a wider window
+	var wider := (m.view_margin << 8) / FURTHEST_ZOOM
+	set16(window, u16(camera + CAMERA_X) - WINDOW_LEFT - wider)
 	set16(window + 2, u16(camera + CAMERA_Y) - WINDOW_ABOVE)
-	set16(window + 4, u16(window) + WINDOW_SPAN)
+	set16(window + 4, u16(window) + WINDOW_SPAN + wider * 2)
 	set16(window + 6, u16(window + 2) + WINDOW_SPAN)
 
 

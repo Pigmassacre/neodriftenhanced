@@ -660,12 +660,12 @@ func place_on_screen() -> void:
 	set16(rival + SCREEN_Y, y - u16(rival + SIZE_Y) + u16(rival + MARGIN_Y))
 
 
-## $CA2E: is any of it on the 320 by 224 screen?
+## $CA2E: is any of it on the 320 by 224 screen, or what more of it is drawn?
 func note_on_screen() -> void:
 	var rival := m.a6
-	var x := (u16(rival + SCREEN_X) + 0x60) & 0xFFFF
+	var x := (u16(rival + SCREEN_X) + 0x60 + m.view_margin) & 0xFFFF
 	var y := (u16(rival + SCREEN_Y) + 0x40) & 0xFFFF
-	set16(rival + ON_SCREEN, 1 if x <= 0x1A0 and y <= 0x140 else 0)
+	set16(rival + ON_SCREEN, 1 if x <= 0x1A0 + m.view_margin * 2 and y <= 0x140 else 0)
 
 
 ## $CA58: is it within 800 pixels across and 384 down of the camera?

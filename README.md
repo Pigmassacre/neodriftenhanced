@@ -22,6 +22,11 @@ Godot/Godot_v4.7.2-stable_linux.x86_64 --path Project
 
 Keys: arrows, `Z X C V` = buttons A B C D, `1` = start, `5` = insert coin.
 
+In a race the picture is as wide as the window (up to 640 by 224 game
+pixels; the original is 320 wide). `--resolution 1920x1080` sets the window
+size; after `--`, `--width=320` keeps the original width and
+`--hardware-video` draws exactly what the hardware would.
+
 ## How it works
 
 - `Tools/recomp/` translates the game's 68000 program into GDScript
@@ -34,8 +39,12 @@ Keys: arrows, `Z X C V` = buttons A B C D, `1` = start, `5` = insert coin.
   no CPU time, so the game no longer slows down where the original did.
 - `Project/machine/neogeo_machine.gd` is the machine that code runs on:
   registers, memory map, video registers, raster timer, interrupts.
-- `Project/video/` draws the machine's video RAM (sprites with the hardware's
-  shrink tables, text layer, palettes) with shaders.
+- `Project/video/` draws the picture with shaders. Normally from the game's
+  own records (`game_scene.gd`): the ground straight from the course's map
+  and each object from its record, at any width, with the original's code
+  that turned them into hardware sprites taken out. It can also draw the
+  machine's video RAM as the hardware would (sprites with the hardware's
+  shrink tables, text layer, palettes), which is what is compared with MAME.
 - `Project/sound/` runs the game's own Z80 sound driver and synthesises what
   it plays on the sound chip (FM, square waves and noise, sampled sound).
   The chip's seventh sampled channel (ADPCM-B) makes no sound yet.
@@ -57,7 +66,9 @@ python3 verify_session.py practice_steer --translated --shots
 This plays a scripted session in MAME, replays the same inputs in Godot from
 the same starting state, and compares work RAM after every frame and
 screenshots pixel for pixel. `--check-routines` also runs every call of a
-hand-written routine both ways and compares the outcomes. Sessions are
+hand-written routine both ways and compares the outcomes.
+`--translated --compare-views` draws every frame both from the game's records
+and from video RAM and counts the frames that differ. Sessions are
 defined at the top of `verify_session.py`; `Tools/routines.py` lists the
 game's routines and how far the hand-writing has come.
 

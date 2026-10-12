@@ -9,6 +9,9 @@ uniform sampler2D cells_tex : filter_nearest, repeat_disable;
 uniform sampler2D fix_tex : filter_nearest, repeat_disable;   // 512x512, 64 tiles per row
 uniform sampler2D pal_tex : filter_nearest, repeat_disable;   // 16 x 256
 uniform vec2 screen_size = vec2(320.0, 224.0);
+// Leaves out the first and the last column, which the game fills with black
+// to hide the ragged edges of its scrolling ground.
+uniform bool open_sides = false;
 
 // The first two tile rows are above the visible picture.
 const int FIRST_ROW = 2;
@@ -16,6 +19,9 @@ const int FIRST_ROW = 2;
 void fragment() {
 	ivec2 pixel = ivec2(floor(UV * screen_size));
 	ivec2 cell_pos = ivec2(pixel.x >> 3, (pixel.y >> 3) + FIRST_ROW);
+	if (open_sides && (cell_pos.x == 0 || cell_pos.x == 39)) {
+		discard;
+	}
 	ivec4 cell = ivec4(round(texelFetch(cells_tex, cell_pos, 0) * 255.0));
 	if (pixel.y < cell.a) {
 		cell = ivec4(round(texelFetch(cells_tex, cell_pos + ivec2(40, 0), 0) * 255.0));

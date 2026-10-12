@@ -7,6 +7,7 @@
 ## When decomp is finished
 
 - Widescreen/ultrawide support
+- Widescreen/ultrawide support in menus as well (the background should keep repeating)
 - Minimap
 - Actual translucency instead of faked translucency
 - Reworked menus

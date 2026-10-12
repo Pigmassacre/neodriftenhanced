@@ -117,6 +117,10 @@ def main():
     parser.add_argument("--check-routines", action="store_true",
                         help="run every call of a hand-written routine both ways and compare")
     parser.add_argument("--keep-recording", action="store_true", help="reuse an existing MAME recording")
+    parser.add_argument("--compare-views", action="store_true",
+                        help="instead of comparing with MAME, draw every frame from the game's records and "
+                             "from video RAM and compare the two (needs a display; differing frames are "
+                             "saved to the session's views folder)")
     args = parser.parse_args()
 
     first, last, inputs = SESSIONS[args.session][:3]
@@ -150,6 +154,24 @@ def main():
         common.append("--translated")
     if args.only_routines:
         common.append("--only-routines=" + args.only_routines)
+    if args.compare_views:
+        views = os.path.join(out, "views")
+        os.makedirs(views, exist_ok=True)
+        for name in os.listdir(views):
+            os.remove(os.path.join(views, name))
+        try:
+            run = subprocess.run([GODOT, "--path", PROJECT, "--", "--no-sound", "--frames=%d" % frames,
+                                  "--compare-views=" + views] + common,
+                                 capture_output=True, text=True, timeout=300 + frames // 5)
+            text = run.stdout + run.stderr
+        except subprocess.TimeoutExpired as stalled:
+            text = "".join(part.decode() if isinstance(part, bytes) else part or ""
+                           for part in (stalled.stdout, stalled.stderr))
+            print("godot: the run did not finish")
+        for line in text.splitlines():
+            if line.startswith(("compared ", "differing ")) or "ERROR" in line:
+                print("godot:", line)
+        return
     result = subprocess.run([GODOT, "--headless", "--path", PROJECT, "--script", "res://tools/replay.gd", "--",
                              "--frames=%d" % frames, "--out=" + godot_log] + common + extra,
                             capture_output=True, text=True)
@@ -173,7 +195,7 @@ def main():
         pattern = os.path.join(out, "godot_%d.png")
         # a script error leaves the game window open and idle, hence the time limit
         try:
-            shots = subprocess.run([GODOT, "--path", PROJECT, "--", "--shot=" + pattern,
+            shots = subprocess.run([GODOT, "--path", PROJECT, "--", "--hardware-video", "--shot=" + pattern,
                                     "--shot-frame=" + ",".join(str(f - snapshot_frame) for f in shot_frames)]
                                    + common, capture_output=True, text=True, timeout=120 + frames // 10)
             errors = shots.stdout + shots.stderr

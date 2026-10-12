@@ -1,6 +1,12 @@
 class_name NeoGeoVideo
 extends Node2D
-## Draws the machine's video state: backdrop, sprites and the text layer.
+## Draws the game's picture: backdrop, ground, sprites and the text layer.
+##
+## It draws either what is in the machine's video RAM, as the hardware would
+## (320 pixels wide), or, given a GameScene, what the game asked for: the
+## ground straight from the course's map and every object from its record.
+## That picture can be wider than the hardware's (`view_width`), and is the
+## same in the middle 320 pixels.
 ##
 ## Sprites are drawn as one quad per 16-pixel strip, in hardware priority
 ## order; the shader reproduces the hardware's tile lookup and shrinking.
@@ -10,10 +16,33 @@ const FIRST_LINE := 16
 const LAST_SPRITE := 380
 const SPRITES_PER_LINE := 96
 const STRIP_TILES := 32
-const STRIP_ROWS := 512
+## Rows of the strip texture: the hardware has 381 sprites, a scene can have more.
+const STRIP_ROWS := 2048
+const WIDEST_VIEW := 1024
+## Which of a tile's 16 columns of pixels the hardware keeps at each of its
+## shrink steps across (bit 0 is the leftmost).
+const SHRINK_X: Array[int] = [
+	0x0100, 0x0110, 0x1110, 0x1114, 0x5114, 0x5154, 0x5554, 0x5555,
+	0x5755, 0x575D, 0xD75D, 0xD7DD, 0xF7DD, 0xF7DF, 0xFFDF, 0xFFFF]
+## The ground's zoom tables in the program ROM: four words about its raster
+## split (how many lines early it is set up, a timing allowance, the first
+## and the last line it may be on), and by sixteenths of the zoom across,
+## for each of 32 columns how much its width changes from the column before
+## (in the high byte).
+const GROUND_RASTER := 0x296E2
+const GROUND_WIDTH_STEPS := 0x296F2
 const PARAM_SCALE := 1024.0
 
 var machine: RefCounted
+## What the game asked for, to draw from instead of video RAM while the game
+## has the screen. Null draws video RAM always.
+var scene: GameScene
+## How wide the picture is, in pixels. Beyond the hardware's 320 only the
+## ground and what is on it are drawn, so the extra shows only in a race.
+var view_width := int(SCREEN.x):
+	set(value):
+		view_width = clampi(value, int(SCREEN.x), WIDEST_VIEW)
+		_lay_out()
 
 var _colours := PackedInt32Array()
 var _palette_bytes := PackedByteArray()
@@ -29,7 +58,16 @@ var _cells_tex: ImageTexture
 var _fix_cart: ImageTexture
 var _fix_bios: ImageTexture
 
+var _zoom_y := PackedByteArray()
+var _kept_columns: Array[PackedByteArray] = []
+var _lookup_bytes := PackedByteArray()
+var _lookup_tex: ImageTexture
+var _map_key: Array = []
+
 var _backdrop: ColorRect
+var _ground: ColorRect
+var _ground_material: ShaderMaterial
+var _bars: Array[ColorRect] = []
 var _sprites: Node2D
 var _fix: ColorRect
 var _sprite_material: ShaderMaterial
@@ -56,9 +94,30 @@ func _ready() -> void:
 	_cells_tex = ImageTexture.create_from_image(
 			Image.create_from_data(120, 32, false, Image.FORMAT_RGBA8, _cell_bytes))
 
+	_zoom_y = FileAccess.get_file_as_bytes(dir.path_join("zoom_y.bin"))
+	_zoom_y.resize(0x10000)
+	for mask in SHRINK_X:
+		var kept := PackedByteArray()
+		for column in 16:
+			if mask & (1 << column):
+				kept.append(column)
+		_kept_columns.append(kept)
+	_lookup_bytes.resize(WIDEST_VIEW * 2 * 4)
+	_lookup_tex = ImageTexture.create_from_image(
+			Image.create_from_data(WIDEST_VIEW, 2, false, Image.FORMAT_RGBA8, _lookup_bytes))
+
 	_backdrop = ColorRect.new()
-	_backdrop.size = SCREEN
 	add_child(_backdrop)
+
+	_ground_material = ShaderMaterial.new()
+	_ground_material.shader = preload("res://video/ground.gdshader")
+	_ground_material.set_shader_parameter("lookup_tex", _lookup_tex)
+	_ground_material.set_shader_parameter("tiles_tex", tiles)
+	_ground_material.set_shader_parameter("pal_tex", _palette_tex)
+	_ground = ColorRect.new()
+	_ground.material = _ground_material
+	_ground.visible = false
+	add_child(_ground)
 
 	_sprite_material = ShaderMaterial.new()
 	_sprite_material.shader = preload("res://video/sprites.gdshader")
@@ -70,6 +129,12 @@ func _ready() -> void:
 	_sprites.material = _sprite_material
 	add_child(_sprites)
 
+	for side in 2:
+		var bar := ColorRect.new()
+		bar.color = Color.BLACK
+		add_child(bar)
+		_bars.append(bar)
+
 	_fix_material = ShaderMaterial.new()
 	_fix_material.shader = preload("res://video/fix.gdshader")
 	_fix_material.set_shader_parameter("cells_tex", _cells_tex)
@@ -78,6 +143,27 @@ func _ready() -> void:
 	_fix.size = SCREEN
 	_fix.material = _fix_material
 	add_child(_fix)
+	_lay_out()
+
+
+## How far the hardware's picture is from the left edge.
+func margin() -> int:
+	return (view_width - int(SCREEN.x)) / 2
+
+
+func _lay_out() -> void:
+	if _fix == null:
+		return
+	var size := Vector2(view_width, SCREEN.y)
+	var left := margin()
+	_backdrop.size = size
+	_ground.size = size
+	_ground_material.set_shader_parameter("view_size", size)
+	_sprites.position.x = left
+	_fix.position.x = left
+	_bars[0].size = Vector2(left, SCREEN.y)
+	_bars[1].size = Vector2(view_width - left - SCREEN.x, SCREEN.y)
+	_bars[1].position.x = left + SCREEN.x
 
 
 func _texture(path: String, width: int, height: int, format: Image.Format) -> ImageTexture:
@@ -249,16 +335,43 @@ func _find_line_limits(vram: PackedInt32Array) -> void:
 				break
 
 
-## Rebuilds everything from the machine's current video state.
+## True if the hardware left sprites out of the last picture drawn from video
+## RAM, for having more than 96 on a line.
+func over_line_limit() -> bool:
+	return not _last_on_line.is_empty()
+
+
+## Rebuilds everything from the machine's current state.
 func refresh() -> void:
-	var vram: PackedInt32Array = machine.vram
 	var palette: PackedInt32Array = machine.palette
 	var bank: int = machine.palette_bank * 0x1000
 	for i in 0x1000:
 		_palette_bytes.encode_u32(i * 4, _colours[palette[bank + i]])
+	var from_scene := scene != null and scene.in_use()
+	if from_scene:
+		var to_come := scene.colours_to_come()
+		for index: int in to_come:
+			_palette_bytes.encode_u32(index * 4, _colours[to_come[index]])
 	_palette_tex.update(Image.create_from_data(16, 256, false, Image.FORMAT_RGBA8, _palette_bytes))
 	_backdrop.color = Color8(_palette_bytes[0xFFF * 4], _palette_bytes[0xFFF * 4 + 1], _palette_bytes[0xFFF * 4 + 2])
+	_sprite_material.set_shader_parameter("auto_anim", machine.auto_anim_counter)
+	_sprite_material.set_shader_parameter("auto_anim_enabled", (machine.lspc_mode & 8) == 0)
+	var wide := false
+	if from_scene:
+		_draw_scene()
+		wide = scene.ground_on
+	else:
+		_ground.visible = false
+		_draw_video_ram()
+	for bar in _bars:
+		bar.visible = not wide
+	_fix_material.set_shader_parameter("open_sides", wide and view_width > int(SCREEN.x))
+	_draw_text()
 
+
+## The sprites as video RAM has them.
+func _draw_video_ram() -> void:
+	var vram: PackedInt32Array = machine.vram
 	# The game changes strips' vertical control words while the picture is
 	# being drawn (to move the background, or to clear the screen). The frame
 	# is cut into bands at those raster lines, and each band is drawn with
@@ -335,9 +448,11 @@ func refresh() -> void:
 	RenderingServer.canvas_item_clear(item)
 	if not indices.is_empty():
 		RenderingServer.canvas_item_add_triangle_array(item, indices, points, colours, uvs)
-	_sprite_material.set_shader_parameter("auto_anim", machine.auto_anim_counter)
-	_sprite_material.set_shader_parameter("auto_anim_enabled", (machine.lspc_mode & 8) == 0)
 
+
+## The text layer as video RAM has it.
+func _draw_text() -> void:
+	var vram: PackedInt32Array = machine.vram
 	# Text changed while the picture was being drawn shows the old text above
 	# the raster line of the change. A cell can change twice in a frame (the
 	# attract mode blanks its text and writes it again), so the texture holds
@@ -367,3 +482,174 @@ func refresh() -> void:
 		_cell_bytes.encode_u32(out, (word & 0xFFF) | ((word >> 12) << 16) | (split << 24))
 	_cells_tex.update(Image.create_from_data(120, 32, false, Image.FORMAT_RGBA8, _cell_bytes))
 	_fix_material.set_shader_parameter("fix_tex", _fix_cart if machine.fix_from_cart else _fix_bios)
+
+
+## The ground and the objects as the game asked for them.
+func _draw_scene() -> void:
+	_last_on_line.clear()
+	var wide := scene.ground_on
+	var left := -margin() if wide else 0
+	var right := int(SCREEN.x) - left
+	var bottom := FIRST_LINE + int(SCREEN.y)
+	var strips := scene.strips
+	var points := PackedVector2Array()
+	var colours := PackedColorArray()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	var count := mini(strips.size() / GameScene.STRIP_FIELDS, STRIP_ROWS)
+	for strip in count:
+		var at := strip * GameScene.STRIP_FIELDS
+		var x := strips[at]
+		if not wide:
+			# as on the hardware, which counts across in nine bits: some
+			# screens rely on a row of columns coming round on the left
+			x &= 0x1FF
+			if x > 0x1F0:
+				x -= 0x200
+		if x >= right or x + 16 <= left:
+			continue
+		var top := strips[at + 1]
+		var rows := strips[at + 2]
+		_add_strip(points, colours, uvs, indices, strip, x, maxi(top, FIRST_LINE),
+				mini(top + rows * 16, bottom), top & 0x1FF, strips[at + 4], rows, strips[at + 3])
+	var bytes := scene.strip_tiles.slice(0, count * GameScene.STRIP_BYTES)
+	bytes.resize(_strip_bytes.size())
+	_strips_tex.update(Image.create_from_data(
+			STRIP_TILES, STRIP_ROWS, false, Image.FORMAT_RGBA8, bytes))
+	var item := _sprites.get_canvas_item()
+	RenderingServer.canvas_item_clear(item)
+	if not indices.is_empty():
+		RenderingServer.canvas_item_add_triangle_array(item, indices, points, colours, uvs)
+
+	_ground.visible = scene.ground_on and scene.zoom.x >= 0x10
+	if not _ground.visible:
+		return
+	_load_map()
+	_look_up_ground()
+	_ground_material.set_shader_parameter("auto_anim", machine.auto_anim_counter)
+	_ground_material.set_shader_parameter("auto_anim_enabled", (machine.lspc_mode & 8) == 0)
+
+
+## Makes the textures of the course's map when the course has changed: the
+## block number of every place, and the 16 by 16 tiles of every block, 16
+## blocks to a texture row, each as it is in the ROM (a column at a time;
+## tile number, then flips and palette).
+func _load_map() -> void:
+	var key := [scene.map_places, scene.blocks, scene.map_across, scene.map_down, scene.block_count]
+	if key == _map_key:
+		return
+	_map_key = key
+	var places := PackedByteArray()
+	var across := maxi(scene.map_across, 1)
+	var down := maxi(scene.map_down, 1)
+	places.resize(across * down * 4)
+	for place in across * down:
+		places.encode_u16(place * 4, machine.r16(scene.map_places + place * 2))
+	var block_bytes := PackedByteArray()
+	var rom: PackedByteArray = machine.rom
+	for block in scene.block_count:
+		var address: int = machine.r32(scene.blocks + block * 4) & 0xFFFFFF
+		if address >= 0x200000:
+			address -= 0x100000
+		block_bytes.append_array(rom.slice(address, address + 0x400))
+	var block_rows := maxi((scene.block_count + 15) / 16, 1)
+	block_bytes.resize(block_rows * 16 * 0x400)
+	_ground_material.set_shader_parameter("places_tex", ImageTexture.create_from_image(
+			Image.create_from_data(across, down, false, Image.FORMAT_RGBA8, places)))
+	_ground_material.set_shader_parameter("blocks_tex", ImageTexture.create_from_image(
+			Image.create_from_data(0x1000, block_rows, false, Image.FORMAT_RGBA8, block_bytes)))
+
+
+## Works out which column of the map's tiles, and which of a tile's pixels,
+## is at every pixel across the picture, and likewise down it, as the
+## original's ground of 32 hardware sprites shows them ($13CAA, $13D34 and
+## the hardware's shrinking), and carries on in the same way to the sides
+## of the hardware's 32 columns.
+func _look_up_ground() -> void:
+	var rom: PackedByteArray = machine.rom
+	var zoom_x := scene.zoom.x
+	var zoom_y := scene.zoom.y
+	var blocks_across := maxi(scene.map_across, 1)
+	var blocks_down := maxi(scene.map_down, 1)
+	_lookup_bytes.fill(0)
+
+	# Across: a column of tiles is as many pixels wide as the zoom has whole
+	# sixteenths, and some columns one more, by a table of 32.
+	var wider := PackedByteArray()
+	var steps := GROUND_WIDTH_STEPS + (zoom_x & 0xF) * 64
+	var sum := 0
+	for column in 32:
+		sum += rom.decode_s16(steps + column * 2) >> 8
+		wider.append(sum)
+	var narrowest := (((zoom_x - 0x10) & 0xF0) << 4) + zoom_y - 1
+	var whole := zoom_x >> 4
+	var first_column := scene.camera.x >> 4
+	var start := ((-(((scene.camera.x & 15) * zoom_x) >> 1)) & 0xFF80) >> 7
+	if start >= 0x100:
+		start -= 0x200
+	var view_left := -margin()
+	var view_right := view_width + view_left
+	var x := start
+	var column := 0
+	while x < view_right:
+		var extra := wider[column & 31]
+		_fill_column(x - view_left, ((narrowest + (extra << 8)) >> 8) & 0xF,
+				_tile_in_map(first_column + column, blocks_across))
+		x += whole + extra
+		column += 1
+	x = start
+	column = -1
+	while x > view_left:
+		var extra := wider[column & 31]
+		x -= whole + extra
+		_fill_column(x - view_left, ((narrowest + (extra << 8)) >> 8) & 0xF,
+				_tile_in_map(first_column + column, blocks_across))
+		column -= 1
+
+	# Down: the hardware's own table says which line of the 512 of the ring
+	# of tiles is on each line of the picture. The ring is set a second time
+	# lower down the picture where it would end.
+	var raster_early := rom.decode_s16(GROUND_RASTER)
+	var raster_first := rom.decode_s16(GROUND_RASTER + 4)
+	var raster_last := rom.decode_s16(GROUND_RASTER + 6)
+	var shrink := (zoom_y - 1) & 0xFF
+	var period := (shrink + 1) << 1
+	var first_top := zoom_y - (((scene.camera.y & 0x1FF) * zoom_y) >> 8)
+	var split := first_top + zoom_y
+	var first_row := (scene.camera.y >> 4) - 2
+	for y in int(SCREEN.y):
+		var line := y + FIRST_LINE
+		var top := first_top
+		if split < raster_first or (split <= raster_last and line >= split - raster_early):
+			top = split + zoom_y
+		var ring_line := (line - top) & 0x1FF
+		var zoom_line := ring_line & 0xFF
+		var upside_down := (ring_line & 0x100) != 0
+		if upside_down:
+			zoom_line ^= 0xFF
+		zoom_line %= period
+		if zoom_line > shrink:
+			zoom_line = period - 1 - zoom_line
+			upside_down = not upside_down
+		var entry := _zoom_y[shrink * 256 + zoom_line]
+		if upside_down:
+			entry ^= 0x1FF
+		var row := _tile_in_map(first_row + (((entry >> 4) + 16 - first_row) & 31), blocks_down)
+		_lookup_bytes.encode_u32((WIDEST_VIEW + y) * 4, row | ((entry & 15) << 16) | (0xFF << 24))
+	_lookup_tex.update(Image.create_from_data(WIDEST_VIEW, 2, false, Image.FORMAT_RGBA8, _lookup_bytes))
+
+
+## Which of the map's tiles, across or down, the tile `tile` from its edge
+## is. The map repeats, and as the original counts blocks in a byte ($13706)
+## it starts again after 256 blocks whether it fits or not.
+func _tile_in_map(tile: int, blocks: int) -> int:
+	return ((((tile >> 4) & 0xFF) % blocks) << 4) | (tile & 15)
+
+
+## Notes the pixels of one column of tiles, the leftmost at `x` of the view.
+func _fill_column(x: int, shrink: int, column: int) -> void:
+	var kept := _kept_columns[shrink]
+	for index in kept.size():
+		var at := x + index
+		if at >= 0 and at < view_width:
+			_lookup_bytes.encode_u32(at * 4, column | (kept[index] << 16) | (0xFF << 24))

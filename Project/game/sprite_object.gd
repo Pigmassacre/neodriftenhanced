@@ -1,8 +1,8 @@
 extends GameRoutines
 ## Things on screen. The game keeps a record for each thing it draws and
-## builds the hardware's sprites from all of them once a frame (the builder,
-## $12036-$13330, is still translated). These are the routines the rest of
-## the game uses to change such a record, in register A0.
+## everything shown is drawn from them once a frame (video/game_scene.gd;
+## the original built hardware sprites from them at $1229E). These are the
+## routines the rest of the game uses to change such a record, in register A0.
 
 ## 1 when shown, 2 when hidden.
 const SHOWN := 0x00
