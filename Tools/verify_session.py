@@ -44,7 +44,14 @@ def menu_inputs():
     return inputs
 
 
-# name: (snapshot frame, last frame, [(input, first frame, last frame), ...])
+# The stage timer (the whole part of the 16.16 value at $103334, a frame each).
+# Sessions for the later stages keep it topped up, because holding the
+# accelerator alone finishes a stage too late to go on to the next one.
+TIMER_TOPUP = (0x3334, 300, 1500)
+HOLD = menu_inputs() + [("a", 3100, 100000)]
+
+# name: (snapshot frame, last frame, [(input, first frame, last frame), ...][, top-up])
+# A top-up is (work RAM offset, below, value): see `topup` in mame/harness.lua.
 SESSIONS = {
     # the original recording: straight through the practice stage holding accelerate
     "practice_hold": (2600, 4400, menu_inputs() + [("a", 3100, 5100)]),
@@ -57,15 +64,27 @@ SESSIONS = {
     # the end of the practice stage, stage 1 until the time runs out, the continue
     # countdown, game over, and attract mode round to its demo of stage 1
     "stage1_hold": (4400, 14000, menu_inputs() + [("a", 3100, 14000)]),
+    # the later stages with the accelerator held and the timer topped up
+    "stage2_hold": (9300, 16000, HOLD, TIMER_TOPUP),
+    "stage3_hold": (16000, 23500, HOLD, TIMER_TOPUP),
+    "stage4_hold": (23500, 32000, HOLD, TIMER_TOPUP),
+    "stage5_hold": (32000, 40000, HOLD, TIMER_TOPUP),
+    "stage6_hold": (40000, 48000, HOLD, TIMER_TOPUP),
+    # the end of the last stage, the totals, the ending, and attract mode with
+    # its demos of other stages, the ranking and the car screens
+    "ending": (48000, 62000, HOLD, TIMER_TOPUP),
 }
 
 
-def write_job(path, out, first, last, inputs, shot_step):
+def write_job(path, out, first, last, inputs, shot_step, topup=None):
     lines = ["return {", '  out = "%s", stop = %d,' % (out, last),
              "  snapshot = %d, ramlog = {%d, %d}, seedlog = {%d, %d}," % (first, first, last, first - 5, last),
              "  snaps = (function() local t = {} for f = %d, %d, %d do t[#t + 1] = f end return t end)(),"
              % (first + shot_step, last, shot_step),
              "  inputs = {"]
+    if topup:
+        # from the first frame, so that the play up to the snapshot is the same
+        lines.insert(-1, "  topup = {0, %d, 0x%X, %d, %d}," % (last, 0x100000 + topup[0], topup[1], topup[2]))
     for name, a, b in inputs:
         port, field = FIELDS[name]
         lines.append('    {%d, %d, "%s", "%s"},' % (a, b, port, field))
@@ -93,14 +112,15 @@ def main():
     parser.add_argument("--keep-recording", action="store_true", help="reuse an existing MAME recording")
     args = parser.parse_args()
 
-    first, last, inputs = SESSIONS[args.session]
+    first, last, inputs = SESSIONS[args.session][:3]
+    topup = SESSIONS[args.session][3] if len(SESSIONS[args.session]) > 3 else None
     out = os.path.join(neogeo.ROOT, "data", "verify", args.session)
     os.makedirs(out, exist_ok=True)
     snapshot = os.path.join(out, "snapshot.bin")
 
     if not (args.keep_recording and os.path.exists(snapshot)):
         job = os.path.join(out, "job.lua")
-        write_job(job, out, first, last, inputs, args.shot_step)
+        write_job(job, out, first, last, inputs, args.shot_step, topup)
         subprocess.run([os.path.join(neogeo.ROOT, "Tools", "mame", "run.sh"), job,
                         "-seconds_to_run", str(last // 55 + 20)],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -114,6 +134,8 @@ def main():
     godot_log = os.path.join(out, "godot_ram.bin")
     common = ["--snapshot=" + snapshot, "--seedlog=" + os.path.join(out, "seedlog.bin")] \
         + replay_inputs(inputs, snapshot_frame, frames)
+    if topup:
+        common.append("--topup=%d:%d:%d" % topup)
     result = subprocess.run([GODOT, "--headless", "--path", PROJECT, "--script", "res://tools/replay.gd", "--",
                              "--frames=%d" % frames, "--out=" + godot_log] + common,
                             capture_output=True, text=True)
@@ -124,14 +146,30 @@ def main():
     compare_ram.main()
 
     if args.shots:
+        for name in os.listdir(out):
+            if name.startswith("godot_") and name.endswith(".png"):
+                os.remove(os.path.join(out, name))
         shot_frames = [f for f in range(first + args.shot_step, last + 1, args.shot_step)
                        if 0 < f - snapshot_frame <= frames]
         pattern = os.path.join(out, "godot_%d.png")
-        subprocess.run([GODOT, "--path", PROJECT, "--", "--shot=" + pattern,
-                        "--shot-frame=" + ",".join(str(f - snapshot_frame) for f in shot_frames)] + common,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # a script error leaves the game window open and idle, hence the time limit
+        try:
+            shots = subprocess.run([GODOT, "--path", PROJECT, "--", "--shot=" + pattern,
+                                    "--shot-frame=" + ",".join(str(f - snapshot_frame) for f in shot_frames)]
+                                   + common, capture_output=True, text=True, timeout=120 + frames // 10)
+            errors = shots.stdout + shots.stderr
+        except subprocess.TimeoutExpired as stalled:
+            errors = "".join(part.decode() if isinstance(part, bytes) else part or ""
+                             for part in (stalled.stdout, stalled.stderr))
+            print("godot: the screenshot run did not finish")
+        for line in errors.splitlines():
+            if "SCRIPT ERROR" in line:
+                print("godot:", line)
         exact = 0
         for f in shot_frames:
+            if not os.path.exists(pattern % (f - snapshot_frame)):
+                print("  frame %d: no screenshot" % f)
+                continue
             _, _, a = render.read_png(os.path.join(out, "f%06d.png" % f))
             _, _, b = render.read_png(pattern % (f - snapshot_frame))
             diff = sum(1 for p, q in zip(a, b) if p != q)

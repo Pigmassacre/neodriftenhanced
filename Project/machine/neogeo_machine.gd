@@ -13,9 +13,24 @@ extends RefCounted
 const CYCLES_PER_LINE := 768
 const LINES_PER_FRAME := 264
 const CYCLES_PER_FRAME := CYCLES_PER_LINE * LINES_PER_FRAME
-## A frame starts where the vertical blank interrupt is raised.
+## A frame starts with line 240, where the vertical blank begins. The
+## interrupt for it is raised this many cycles later (59 ticks of the 24 MHz
+## master clock, as in MAME), and the raster timer is reloaded later still
+## (1146 ticks).
 const VBLANK_LINE := 240
+const VBLANK_IRQ_DELAY := 30
+const VBLANK_RELOAD_DELAY := 573
 const FIRST_VISIBLE_LINE := 16
+## The game's wait for the vertical blank: where its loop starts, the work RAM
+## word that ends it, the seed it steps, and the cycles one turn takes.
+const E_CLOCK_CYCLES := 10
+const WAIT_LOOP := 0xB6E
+const WAIT_FLAG := 0x424
+const WAIT_SEED := 0x430
+const WAIT_TURN_CYCLES := 146
+## The instruction after the loop's `rol.w #2`, which ends with 6 cycles off the bus.
+const WAIT_ROTATE_END := 0x10C2
+const WAIT_ROTATE_IDLE := 6
 
 # 68000 state
 var d0 := 0
@@ -49,6 +64,13 @@ var stopped := false
 var cyc := 0
 var event_cyc := 0
 var frame_start := 0
+var _next_frame := -1
+## Added to `cyc`, gives a count that is a multiple of ten where an interrupt
+## handler starts. The phase is arbitrary, as it is from one power-on to the
+## next; a snapshot sets it to what MAME had (see MachineLoader).
+var e_clock := 0
+var _irq1_cyc := 0
+var _irq2_cyc := 0
 var recheck := false
 var halted := false
 var missing_block := -1
@@ -141,26 +163,45 @@ func hook_block(address: int, callback: Callable) -> void:
 
 # --- execution ---------------------------------------------------------------
 
-## Runs one video frame, starting at the vertical blank interrupt.
+## Runs one video frame, starting where the vertical blank begins.
 func run_frame() -> void:
-	frame_start = cyc
+	# The last block of a frame runs a little past its end; the next frame
+	# still starts on time.
+	frame_start = _next_frame if (_next_frame >= 0 and cyc >= _next_frame
+			and cyc - _next_frame < CYCLES_PER_LINE) else cyc
+	_next_frame = frame_start + CYCLES_PER_FRAME
 	midframe_y.clear()
 	midframe_text.clear()
-	irq1_pending = true
 	_tick_auto_anim()
-	if lspc_mode & 0x40:
-		_start_timer()
+	var irq_cyc := frame_start + VBLANK_IRQ_DELAY
+	var reload_cyc := frame_start + VBLANK_RELOAD_DELAY
 	var deadline := frame_start + CYCLES_PER_FRAME
 	while cyc < deadline and not halted:
+		if irq_cyc >= 0 and cyc >= irq_cyc:
+			irq1_pending = true
+			_irq1_cyc = irq_cyc
+			irq_cyc = -1
+		if reload_cyc >= 0 and cyc >= reload_cyc:
+			if lspc_mode & 0x40:
+				timer_fire_cyc = reload_cyc + (timer_reload + 1) * 2
+			reload_cyc = -1
 		event_cyc = deadline
+		if irq_cyc >= 0:
+			event_cyc = irq_cyc
+		elif reload_cyc >= 0:
+			event_cyc = reload_cyc
 		if timer_fire_cyc >= 0 and timer_fire_cyc < event_cyc:
 			event_cyc = timer_fire_cyc
-		_service_interrupts()
+		if not _service_interrupts():
+			# an interrupt has to wait for the next instruction
+			event_cyc = cyc + 1
 		recheck = false
 		if stopped:
 			cyc = maxi(cyc, event_cyc)
 		else:
 			while cyc < event_cyc and not recheck:
+				if pc == WAIT_LOOP:
+					_skip_wait_turns()
 				var block: Variant = _table.get(pc)
 				if block == null:
 					missing_block = pc
@@ -170,16 +211,56 @@ func run_frame() -> void:
 		if timer_fire_cyc >= 0 and cyc >= timer_fire_cyc:
 			if lspc_mode & 0x10:
 				irq2_pending = true
+				_irq2_cyc = timer_fire_cyc
 			if lspc_mode & 0x80:
 				timer_fire_cyc += (timer_reload + 1) * 2
 			else:
 				timer_fire_cyc = -1
 
 
-func _service_interrupts() -> void:
+## The game's main loop waits for the vertical blank at WAIT_LOOP, stepping
+## its random seed once a turn. This takes all the whole turns that fit before
+## the next event in one go, leaving what the translated loop would have left.
+## The translated loop (one block per instruction, see build_code.py) runs
+## the rest, so the interrupt still arrives on the right instruction.
+func _skip_wait_turns() -> void:
+	if ram.decode_u16(WAIT_FLAG) != 0:
+		return
+	var turns := (event_cyc - cyc) / WAIT_TURN_CYCLES
+	if turns <= 0:
+		return
+	var seed := ram.decode_u16(WAIT_SEED)
+	for turn in turns:
+		var sum := seed + ((((seed << 2) | (seed >> 14)) + 0x3711) & 0xFFFF)
+		fx = sum >> 16
+		seed = sum & 0xFFFF
+	ram.encode_u16(WAIT_SEED, seed)
+	# the return address and the saved register the last turn left under the stack
+	w32((a7 - 4) & 0xFFFFFFFF, WAIT_LOOP + 0x10)
+	w16((a7 - 6) & 0xFFFFFFFF, d0 & 0xFFFF)
+	cyc += turns * WAIT_TURN_CYCLES
+
+
+## Sets the work RAM word at `offset` to `value` if it is above 0 and under
+## `below`. Verification sessions use it between frames to keep the stage
+## timer from running out, as the MAME harness does (`topup` in harness.lua).
+func top_up(offset: int, below: int, value: int) -> void:
+	var current := ram.decode_u16(offset)
+	if current > 0 and current < below:
+		ram.encode_u16(offset, value)
+
+
+## Starts the handler of a pending interrupt. Returns false if one is pending
+## that the instruction just finished came too late to notice.
+func _service_interrupts() -> bool:
 	var level := 2 if irq2_pending else (1 if irq1_pending else 0)
 	if level <= ipl:
-		return
+		return true
+	# The 68000 looks for interrupts during an instruction's last bus cycle.
+	# Most end with it, but not the wait loop's rotate, where the interrupt
+	# usually arrives.
+	if pc == WAIT_ROTATE_END and cyc - (_irq2_cyc if level == 2 else _irq1_cyc) < WAIT_ROTATE_IDLE:
+		return false
 	var sr := get_sr()
 	supervisor = true
 	a7 = (a7 - 4) & 0xFFFFFFFF
@@ -191,7 +272,12 @@ func _service_interrupts() -> void:
 	var vector := 0x60 + level * 4
 	var source := bios if bios_vectors else rom
 	pc = ((source.decode_u16(vector) << 16) | source.decode_u16(vector + 2)) & 0xFFFFFF
-	cyc += 44
+	# The interrupts are autovectored, and the 68000 answers those in step
+	# with its E clock, a tenth of its own: the handler starts on a fixed
+	# phase of it, 50 to 59 cycles after the interrupted instruction.
+	cyc += 50
+	cyc += posmod(-(cyc + e_clock), E_CLOCK_CYCLES)
+	return true
 
 
 func fault(address: int) -> int:

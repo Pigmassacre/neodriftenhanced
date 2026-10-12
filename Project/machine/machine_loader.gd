@@ -7,6 +7,9 @@ const PROGRAM_ROM := "neodrift/213-p1.p1"
 const BIOS_ROM := "neogeo/sp-s2.sp1"
 const PROGRAM_SCRIPT := "data/game/code/program.gd"
 const SNAPSHOT_MAGIC := "NDS1"
+## Where MAME's E clock is at the start of frame 0, in NeoGeoMachine.e_clock's
+## terms. Found by comparing interrupt times with MAME's instruction trace.
+const E_CLOCK_PHASE := 8
 
 
 static func repo_dir() -> String:
@@ -33,6 +36,20 @@ static func create() -> RefCounted:
 	return machine
 
 
+## Reads a seed log written by the MAME harness: for each frame, the random
+## seed when the main loop left its wait for the vertical blank.
+static func read_seed_log(path: String) -> Dictionary:
+	var seeds := {}
+	var log := FileAccess.open(path, FileAccess.READ)
+	if log == null:
+		return seeds
+	log.big_endian = true
+	while log.get_position() < log.get_length():
+		var frame := log.get_32()
+		seeds[frame] = log.get_16()
+	return seeds
+
+
 static func load_snapshot(machine: RefCounted, path: String) -> Error:
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
@@ -41,6 +58,9 @@ static func load_snapshot(machine: RefCounted, path: String) -> Error:
 	if f.get_buffer(4).get_string_from_ascii() != SNAPSHOT_MAGIC:
 		return ERR_FILE_UNRECOGNIZED
 	machine.set_meta("snapshot_frame", f.get_32())
+	# A frame is 2 cycles more than a whole number of E clock periods, so the
+	# clock's phase at the start of a frame follows from the frame number.
+	machine.e_clock = posmod(machine.get_meta("snapshot_frame") * 2 + E_CLOCK_PHASE, 10)
 	var regs: Array[int] = []
 	for i in 18:
 		regs.append(f.get_32())

@@ -22,6 +22,8 @@ import neogeo
 OUT = os.path.join(neogeo.ROOT, "data", "game", "code")
 SEEDS = os.path.join(neogeo.ROOT, "data", "game", "seeds.txt")
 BIOS_FILE = os.path.join(neogeo.ROOT, "neogeo", "sp-s2.sp1")
+# The main loop's wait for the vertical blank, and the random number step it calls.
+WAIT_LOOPS = ((0xb6e, 0xb7e), (0x10b8, 0x10ce))
 BASE_SCRIPT = "res://machine/neogeo_machine.gd"
 
 
@@ -127,6 +129,11 @@ def main():
         if addr not in program.instrs:
             seeds.add(addr)
             program.explore([addr])
+    # Interrupts are taken between blocks. The main loop waits for the
+    # vertical blank in these two routines, so the interrupt nearly always
+    # arrives there: one block per instruction makes it arrive on time.
+    for first, last in WAIT_LOOPS:
+        program.leaders.update(a for a in program.instrs if first <= a <= last)
     program.build_blocks()
     program.liveness()
     files = gen.generate(program, BASE_SCRIPT)

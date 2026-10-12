@@ -7,6 +7,7 @@ extends Node2D
 ## Options after `--`:
 ##   --snapshot=PATH            machine state to start from (default data/game/start.snapshot)
 ##   --input=FIELD:FIRST-LAST   scripted input for frames FIRST..LAST (as tools/replay.gd)
+##   --topup=OFFSET:BELOW:VALUE keeps a work RAM word topped up (as tools/replay.gd)
 ##   --seedlog=PATH             random seeds from a MAME run (as tools/replay.gd), so
 ##                              screenshots can be compared pixel for pixel
 ##   --no-sound                 run without the sound board
@@ -37,6 +38,8 @@ var _sound_ms_peak := 0.0
 var _machine_ms := 0.0
 var _machine_ms_peak := 0.0
 
+var _topup := PackedInt32Array()
+
 @onready var video: NeoGeoVideo = $Video
 @onready var sound: SoundBoard = $Sound
 
@@ -62,6 +65,9 @@ func _ready() -> void:
 			seedlog = arg.trim_prefix("--seedlog=")
 		elif arg == "--no-sound":
 			use_sound = false
+		elif arg.begins_with("--topup="):
+			for value in arg.trim_prefix("--topup=").split(":"):
+				_topup.append(int(value))
 		elif arg.begins_with("--frames="):
 			_quit_after = int(arg.trim_prefix("--frames="))
 		elif arg.begins_with("--record-audio="):
@@ -83,12 +89,7 @@ func _ready() -> void:
 
 
 func _apply_seed_log(path: String) -> void:
-	var seeds := {}
-	var log := FileAccess.open(path, FileAccess.READ)
-	log.big_endian = true
-	while log.get_position() < log.get_length():
-		var seed_frame := log.get_32()
-		seeds[seed_frame] = log.get_16()
+	var seeds := MachineLoader.read_seed_log(path)
 	var first: int = machine.get_meta("snapshot_frame")
 	# 0xB80 is where the main loop continues after its vblank wait; 0x430 holds the seed.
 	machine.hook_block(0xB80, func() -> void:
@@ -156,6 +157,8 @@ func _step() -> void:
 	machine.input_p1 = p1
 	machine.input_start = start
 	machine.input_coin = coin
+	if not _topup.is_empty():
+		machine.top_up(_topup[0], _topup[1], _topup[2])
 	var started := Time.get_ticks_usec()
 	machine.run_frame()
 	var took := (Time.get_ticks_usec() - started) / 1000.0

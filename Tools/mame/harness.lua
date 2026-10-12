@@ -14,7 +14,8 @@
 --   vwatch = {first, last, vram_lo, vram_hi}  optional: log which code writes that
 --            video RAM range, to vwatch.txt
 --   cputrace = {first, last}  optional: instruction trace of those frames to
---            cputrace.log (needs MAME started with -debug -debugger none)
+--            cputrace.log, each line starting with the CPU's cycle count
+--            (needs MAME started with -debug -debugger none)
 --   snapshot = frame          optional: full machine state to snapshot.bin, for
 --            starting the recompiled program in Godot from that point. Taken at
 --            the first frame from there on where the CPU is between instructions
@@ -26,6 +27,10 @@
 --   ymlog = {first, last}     optional: sound chip register writes and sound
 --            commands to ymlog.txt, as "frame port register value seconds"
 --            (port A/B, machine time of the write) and "frame cmd value seconds"
+--   topup  = {first, last, address, below, word}  optional: at the end of each of
+--            those frames (after the frame's RAM is logged), if the work RAM word
+--            at address is above 0 and under `below`, it is set to `word`. For
+--            sessions that need more than normal play gives, like stage time.
 --   trace  = { first, last, { {name, addr, size}, ... } }  optional per-frame RAM trace (CSV)
 --
 -- Video RAM is not readable without side effects, so it is shadowed here by
@@ -240,9 +245,14 @@ neodrift_frame_sub = emu.add_machine_frame_notifier(function()
   if ramlog_file and frame >= job.ramlog[1] and frame <= job.ramlog[2] then
     ramlog_file:write(mem:read_range(0x100000, 0x10ffff, 8))
   end
+  local topup = job.topup
+  if topup and frame >= topup[1] and frame <= topup[2] then
+    local value = mem:read_u16(topup[3])
+    if value > 0 and value < topup[4] then mem:write_u16(topup[3], topup[5]) end
+  end
   timer_writes = 0
   if job.cputrace and debugger then
-    if frame == job.cputrace[1] then debugger:command(string.format('trace "%s/cputrace.log",maincpu', job.out)) end
+    if frame == job.cputrace[1] then debugger:command(string.format('trace "%s/cputrace.log",maincpu,noloop,{tracelog "%%d ",totalcycles}', job.out)) end
     if frame == job.cputrace[2] + 1 then debugger:command("trace off,maincpu") end
   end
   if job.watch then

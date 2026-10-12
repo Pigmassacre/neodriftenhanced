@@ -2,8 +2,9 @@ shader_type canvas_item;
 
 // The text layer: 40x32 tiles of 8x8 pixels drawn over everything else.
 
-// 80x32: tile lo, tile hi nibble, palette, and the screen line from which the
-// cell applies; above that line the cell 40 to the right (the old text) shows
+// 120x32: tile lo, tile hi nibble, palette, and the screen line from which the
+// cell applies; above that line the cell 40 to the right (the text before a
+// change during the frame) shows, by the same rule
 uniform sampler2D cells_tex : filter_nearest, repeat_disable;
 uniform sampler2D fix_tex : filter_nearest, repeat_disable;   // 512x512, 64 tiles per row
 uniform sampler2D pal_tex : filter_nearest, repeat_disable;   // 16 x 256
@@ -18,6 +19,9 @@ void fragment() {
 	ivec4 cell = ivec4(round(texelFetch(cells_tex, cell_pos, 0) * 255.0));
 	if (pixel.y < cell.a) {
 		cell = ivec4(round(texelFetch(cells_tex, cell_pos + ivec2(40, 0), 0) * 255.0));
+		if (pixel.y < cell.a) {
+			cell = ivec4(round(texelFetch(cells_tex, cell_pos + ivec2(80, 0), 0) * 255.0));
+		}
 	}
 	int tile = cell.r | (cell.g << 8);
 	ivec2 atlas = ivec2(tile & 63, tile >> 6) * 8 + (pixel & ivec2(7));

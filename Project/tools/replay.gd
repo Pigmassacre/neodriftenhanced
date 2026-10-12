@@ -5,6 +5,7 @@ extends SceneTree
 ##   godot --headless --path Project --script res://tools/replay.gd -- \
 ##       --snapshot=PATH --frames=N --out=PATH [--input=FIELD:FIRST-LAST ...]
 ##       [--soundlog=PATH] [--seedlog=PATH] [--dump=FRAME[,FRAME...] --dump-dir=DIR]
+##       [--topup=OFFSET:BELOW:VALUE] [--cycles=FIRST-LAST:PATH]
 ##
 ## --dump writes the video state after those frames in the same format as
 ## the MAME harness dumps, for Tools/render.py and Tools/compare_video.py.
@@ -13,6 +14,12 @@ extends SceneTree
 ## its vblank wait (see Tools/mame/harness.lua). The game steps the seed
 ## while waiting, so its value depends on exact CPU timing. The run reports
 ## how often the port's own seed already agreed, as a measure of its timing.
+##
+## --cycles writes "address cycle-count" for every translated block entered
+## in those frames, for Tools/compare_cycles.py --port.
+##
+## --topup keeps a work RAM word topped up before every frame (see
+## NeoGeoMachine.top_up); numbers are decimal.
 ##
 ## FIELD is a, b, c, d, up, down, left, right, start or coin; frames count
 ## from 0 at the snapshot. Unknown code addresses are appended to
@@ -37,6 +44,9 @@ func _init() -> void:
 	var dump_frames: Array[int] = []
 	var dump_dir := ""
 	var sound_path := ""
+	var topup := PackedInt32Array()
+	var cycle_span: Array[int] = []
+	var cycle_out: FileAccess = null
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--snapshot="):
 			snapshot = arg.trim_prefix("--snapshot=")
@@ -53,6 +63,13 @@ func _init() -> void:
 			dump_dir = arg.trim_prefix("--dump-dir=")
 		elif arg.begins_with("--seedlog="):
 			seedlog_path = arg.trim_prefix("--seedlog=")
+		elif arg.begins_with("--cycles="):
+			var parts := arg.trim_prefix("--cycles=").split(":", true, 1)
+			cycle_span = [int(parts[0].split("-")[0]), int(parts[0].split("-")[1])]
+			cycle_out = FileAccess.open(parts[1], FileAccess.WRITE)
+		elif arg.begins_with("--topup="):
+			for value in arg.trim_prefix("--topup=").split(":"):
+				topup.append(int(value))
 		elif arg.begins_with("--input="):
 			var parts := arg.trim_prefix("--input=").split(":")
 			var span := parts[1].split("-")
@@ -67,11 +84,7 @@ func _init() -> void:
 	var timing := [0, 0]
 	var offsets: Array[int] = []
 	if seedlog_path != "":
-		var log := FileAccess.open(seedlog_path, FileAccess.READ)
-		log.big_endian = true
-		while log.get_position() < log.get_length():
-			var seed_frame := log.get_32()
-			exit_seeds[seed_frame] = log.get_16()
+		exit_seeds = MachineLoader.read_seed_log(seedlog_path)
 		var first: int = machine.get_meta("snapshot_frame")
 		machine.hook_block(WAIT_EXIT, func() -> void:
 			var seed: Variant = exit_seeds.get(first + frame_box[0])
@@ -84,6 +97,11 @@ func _init() -> void:
 					timing[0] += 1
 				offsets.append(turns)
 				machine.ram.encode_u16(SEED, seed))
+	if cycle_out != null:
+		for address: int in machine.block_table().keys():
+			machine.hook_block(address, func() -> void:
+				if frame_box[0] >= cycle_span[0] and frame_box[0] <= cycle_span[1]:
+					cycle_out.store_line("%06X %d" % [address, machine.cyc]))
 	var out := FileAccess.open(out_path, FileAccess.WRITE) if out_path != "" else null
 	var sound_out := FileAccess.open(sound_path, FileAccess.WRITE) if sound_path != "" else null
 	var started := Time.get_ticks_usec()
@@ -101,6 +119,8 @@ func _init() -> void:
 				else:
 					machine.input_p1 |= P1_BITS[entry[0]]
 		frame_box[0] = frame
+		if not topup.is_empty():
+			machine.top_up(topup[0], topup[1], topup[2])
 		machine.run_frame()
 		if machine.halted:
 			break

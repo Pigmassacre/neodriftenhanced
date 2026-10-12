@@ -92,8 +92,8 @@ def _ea_cycles(ea, long, abs_words):
 # jmp, jsr, lea, pea and movem have their own times per addressing mode;
 # an absolute address adds 4 per extension word to the "abs" entry.
 _CONTROL = {
-    "jmp": {"ind": 8, "disp": 10, "idx": 14, "pcidx": 14, "abs": 6},
-    "jsr": {"ind": 16, "disp": 18, "idx": 22, "pcidx": 22, "abs": 14},
+    "jmp": {"ind": 8, "disp": 10, "idx": 14, "pcidx": 14, "abs": 8},
+    "jsr": {"ind": 16, "disp": 18, "idx": 22, "pcidx": 22, "abs": 16},
     "lea": {"ind": 4, "disp": 8, "idx": 12, "pcidx": 12, "abs": 4},
     "pea": {"ind": 12, "disp": 16, "idx": 20, "pcidx": 20, "abs": 12},
     "movem_to_mem": {"ind": 8, "pd": 8, "disp": 12, "idx": 14, "abs": 8},
@@ -139,7 +139,9 @@ def cycles(ins):
     dst_mem = ins.dst is not None and ins.dst[0] not in ("d", "a")
     if n in _CONTROL:
         ea = ins.dst if n in ("jmp", "jsr", "movem_to_mem") else ins.src
-        cost = _CONTROL[n][ea[0]] + (4 * abs_words if ea[0] == "abs" else 0)
+        cost = _CONTROL[n][ea[0]]
+        if ea[0] == "abs":
+            cost += (2 if n in ("jmp", "jsr") else 4) * abs_words
         if n.startswith("movem"):
             cost += bin(ins.aux).count("1") * (8 if long else 4)
         return cost
@@ -195,7 +197,10 @@ def cycles(ins):
             return ((8 if static else 4) + dst) if dst_mem else (10 if static else 6)
         if dst_mem:
             return (12 if static else 8) + dst
-        return (10 if n == "bclr" else 8) + (4 if static else 0)
+        # changing one of a register's upper 16 bits takes 2 more; for a bit
+        # number in a register the generated code adds that
+        high = 2 if static and (ins.src[1] & 31) >= 16 else 0
+        return (8 if n == "bclr" else 6) + high + (4 if static else 0)
     if n in SHIFTS:
         if dst_mem:
             return 8 + dst
@@ -795,6 +800,8 @@ class Emitter:
             else:
                 e("s = 1 << (d%d & %d)" % (ins.src[1], width - 1))
                 bit = "s"
+                if width == 32 and n != "btst":
+                    e("if s >= 0x10000: cyc += 2")
             if n == "btst":
                 self.load(ins.dst, 4 if width == 32 else 1, "t")
                 if "z" in need:
@@ -979,7 +986,6 @@ class Emitter:
         self.emit("var t: int")
         self.emit("var r: int")
         self.emit("var ea: int")
-        cost = sum(cycles(i) for i in b.instrs)
         last = b.instrs[-1] if b.instrs else None
         loops = last is not None and last.flow == "cbranch" and last.target == b.start
         if loops:
@@ -987,7 +993,8 @@ class Emitter:
             # still yields to the dispatcher when an event is due.
             self.emit("while true:")
             self.indent = 2
-        self.emit("cyc += %d" % max(cost, 4))
+        if not b.instrs:
+            self.emit("cyc += 4")
         # flags needed after each instruction
         need_after = []
         live = b.live_out
@@ -997,8 +1004,20 @@ class Emitter:
             live = (live - kills) | uses
         need_after.reverse()
         ended = False
+        # Cycles are added in as few steps as possible, but the count has to
+        # be right wherever the hardware may be read or written: the raster
+        # position and what is drawn where depend on it.
+        pending = 0
         for ins, need in zip(b.instrs, need_after):
             nxt = ins.addr + ins.length
+            cost = cycles(ins)
+            point = cost if ins is last else self.hardware_access(ins, cost)
+            if point is None:
+                pending += cost
+            else:
+                if pending + point:
+                    self.emit("cyc += %d" % (pending + point))
+                pending = cost - point
             if loops and ins is last:
                 self.loop_tail(ins, nxt)
                 ended = True
@@ -1013,6 +1032,33 @@ class Emitter:
             else:
                 self.emit("return 0x%X" % b.next)
         self.out.append("")
+
+    def hardware_access(self, ins, cost):
+        """How many cycles into the instruction it reads or writes memory that
+        may be hardware rather than RAM or ROM, or None if it cannot be.
+
+        Roughly: a read comes after the opcode, a write just before the end.
+        """
+        if ins.name in ("lea", "pea", "jmp", "jsr"):
+            return None
+
+        def maybe(ea):
+            if ea is None:
+                return False
+            if ea[0] in ("ind", "pi", "pd", "disp", "idx"):
+                return ea[1] != 7       # the stack is in RAM
+            if ea[0] == "abs":
+                address = ea[1] & 0xffffff
+                return address >= 0x100000 and not self.p.is_ram(address) \
+                    and self.p.const_read(address, 1) is None
+            return False
+
+        reads_only = ins.name in ("cmp", "cmpa", "cmpi", "tst", "btst", "movem_to_reg")
+        if maybe(ins.dst) and not reads_only:
+            return max(cost - 4, 0)
+        if maybe(ins.src) or maybe(ins.dst):
+            return min(4, cost)
+        return None
 
     def step(self, ins):
         """A one-instruction block, so that execution can enter anywhere.
