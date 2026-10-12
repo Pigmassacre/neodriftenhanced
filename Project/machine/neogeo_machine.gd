@@ -73,6 +73,11 @@ var auto_anim_timer := 0
 ## this frame, as (raster line, sprite, previous value). The game moves the
 ## background strips part-way down the screen with a raster interrupt.
 var midframe_y: Array[Vector3i] = []
+## Text layer words changed while the picture was being drawn this frame, as
+## (raster line, video RAM address, previous value). When a frame's work runs
+## long the game updates text after the raster has passed it, and the old
+## text stays on screen for one more frame.
+var midframe_text: Array[Vector3i] = []
 
 # latches and interrupt lines
 var bios_vectors := false
@@ -97,6 +102,14 @@ var sound_log: Array[int] = []
 var sound_log_times: Array[int] = []
 
 var _table: Dictionary = {}
+## Number of one bits in each 16-bit value (multiply timing).
+static var ONES := PackedByteArray()
+
+
+static func _static_init() -> void:
+	ONES.resize(0x10000)
+	for value in 0x10000:
+		ONES[value] = ONES[value >> 1] + (value & 1)
 
 
 func _init() -> void:
@@ -132,6 +145,7 @@ func hook_block(address: int, callback: Callable) -> void:
 func run_frame() -> void:
 	frame_start = cyc
 	midframe_y.clear()
+	midframe_text.clear()
 	irq1_pending = true
 	_tick_auto_anim()
 	if lspc_mode & 0x40:
@@ -333,6 +347,10 @@ func _io_write(address: int, value: int) -> void:
 					var line := raster_line()
 					if line >= FIRST_VISIBLE_LINE and line < VBLANK_LINE:
 						midframe_y.append(Vector3i(line, vram_addr - 0x8200, vram[vram_addr]))
+				elif vram_addr >= 0x7000 and vram_addr < 0x7500 and vram[vram_addr] != value:
+					var line := raster_line()
+					if line >= FIRST_VISIBLE_LINE and line < VBLANK_LINE:
+						midframe_text.append(Vector3i(line, vram_addr, vram[vram_addr]))
 				vram[vram_addr] = value
 				vram_addr = (vram_addr & 0x8000) | ((vram_addr + vram_mod) & 0x7FFF)
 			4:
@@ -518,7 +536,23 @@ func divu(dividend: int, divisor: int) -> int:
 	if quotient > 0xFFFF:
 		fv = 1
 		fn = 1
+		cyc += 10
 		return dividend
+	# the time follows the processor's shift-and-subtract steps
+	var steps := 38
+	var rest := dividend
+	var high := divisor << 16
+	for step in 15:
+		var carried := (rest & 0x80000000) != 0
+		rest = (rest << 1) & 0xFFFFFFFF
+		if carried:
+			rest = (rest - high) & 0xFFFFFFFF
+		else:
+			steps += 2
+			if rest >= high:
+				rest -= high
+				steps -= 1
+	cyc += steps * 2
 	fv = 0
 	fn = quotient >> 15
 	fz = int(quotient == 0)
@@ -532,6 +566,21 @@ func divs(dividend: int, divisor: int) -> int:
 		return dividend
 	var a := (dividend ^ 0x80000000) - 0x80000000
 	var b := (divisor ^ 0x8000) - 0x8000
+	var steps := 7 if a < 0 else 6
+	if (absi(a) >> 16) >= absi(b):
+		fv = 1
+		fn = 1
+		cyc += (steps + 2) * 2
+		return dividend
+	steps += 55
+	if b >= 0:
+		steps += -1 if a >= 0 else 1
+	var magnitude := absi(a) / absi(b)
+	for step in 15:
+		if (magnitude & 0x8000) == 0:
+			steps += 1
+		magnitude <<= 1
+	cyc += steps * 2
 	var quotient := a / b
 	if quotient > 32767 or quotient < -32768:
 		fv = 1

@@ -65,20 +65,150 @@ def flag_effects(ins):
     return frozenset(), frozenset()
 
 
+def _ext_words(ea, size):
+    """Extension words an operand takes; None for an absolute address (one or two)."""
+    if ea is None or ea[0] in ("d", "a", "ind", "pi", "pd"):
+        return 0
+    if ea[0] == "imm":
+        return 2 if size == 4 else 1
+    if ea[0] == "abs":
+        return None
+    return 1
+
+
+def _ea_cycles(ea, long, abs_words):
+    """Time to work out an operand's address and fetch it."""
+    if ea is None:
+        return 0
+    kind = ea[0]
+    if kind in ("d", "a"):
+        return 0
+    if kind == "abs":
+        return (8 if long else 4) + 4 * abs_words
+    base = {"ind": 4, "pi": 4, "pd": 6, "disp": 8, "idx": 10, "pcidx": 10, "imm": 4}[kind]
+    return base + (4 if long else 0)
+
+
+# jmp, jsr, lea, pea and movem have their own times per addressing mode;
+# an absolute address adds 4 per extension word to the "abs" entry.
+_CONTROL = {
+    "jmp": {"ind": 8, "disp": 10, "idx": 14, "pcidx": 14, "abs": 6},
+    "jsr": {"ind": 16, "disp": 18, "idx": 22, "pcidx": 22, "abs": 14},
+    "lea": {"ind": 4, "disp": 8, "idx": 12, "pcidx": 12, "abs": 4},
+    "pea": {"ind": 12, "disp": 16, "idx": 20, "pcidx": 20, "abs": 12},
+    "movem_to_mem": {"ind": 8, "pd": 8, "disp": 12, "idx": 14, "abs": 8},
+    "movem_to_reg": {"ind": 12, "pi": 12, "disp": 16, "idx": 18, "pcidx": 18, "abs": 12},
+}
+_FIXED = {"nop": 4, "moveq": 4, "ext": 4, "swap": 4, "exg": 6, "rts": 16, "rte": 20, "rtr": 20,
+          "link": 16, "unlk": 12, "trap": 34, "stop": 4, "reset": 132, "bra": 10, "bsr": 18,
+          "move_to_usp": 4, "move_from_usp": 4, "andi_ccr": 20, "ori_ccr": 20, "eori_ccr": 20,
+          "andi_sr": 20, "ori_sr": 20, "eori_sr": 20}
+
+
 def cycles(ins):
-    """Rough 68000 cycle cost; exact timing is not attempted."""
-    base = {"mulu": 54, "muls": 54, "divu": 126, "divs": 142, "jsr": 18, "bsr": 18, "rts": 16,
-            "rte": 20, "jmp": 10, "bra": 10, "bcc": 10, "dbcc": 10, "lea": 4, "pea": 12,
-            "link": 16, "unlk": 12}.get(ins.name, 4)
-    cost = base + 4 * (ins.length // 2 - 1)
+    """68000 cycles for an instruction, from the processor's timing tables.
+
+    Where the time depends on what happens at run time this is the smallest
+    case, and the generated code adds the rest: a branch taken (or a word
+    branch not taken), dbcc ending, scc setting a register, shifts by a
+    register count, and the data-dependent part of multiply and divide.
+    """
+    n = ins.name
+    if n in _FIXED:
+        return _FIXED[n]
+    long = ins.size == 4
+    if n == "bcc":
+        return 8 if ins.length == 2 else 12
+    if n == "dbcc":
+        return 10
+    # how many extension words belong to absolute addresses
+    fixed = 1 if n in ("movem_to_mem", "movem_to_reg") else 0
+    known = 0
+    absolute = 0
     for ea in (ins.src, ins.dst):
-        if ea and ea[0] not in ("d", "a", "imm"):
-            cost += 8 if ins.size == 4 else 4
-    if ins.name in ("movem_to_mem", "movem_to_reg"):
-        cost += bin(ins.aux).count("1") * (8 if ins.size == 4 else 4)
-    if ins.name in SHIFTS:
-        cost += 2 * (ins.src[1] if ins.src[0] == "imm" else 8)
-    return cost
+        size = 2 if (n in BITOPS and ea is ins.src) else ins.size
+        if ea is not None and ea[0] == "imm" and (n in SHIFTS or n in ("addq", "subq")):
+            continue
+        words = _ext_words(ea, size)
+        if words is None:
+            absolute += 1
+        else:
+            known += words
+    abs_words = ins.length // 2 - 1 - fixed - known
+    src_mem = ins.src is not None and ins.src[0] not in ("d", "a", "imm")
+    dst_mem = ins.dst is not None and ins.dst[0] not in ("d", "a")
+    if n in _CONTROL:
+        ea = ins.dst if n in ("jmp", "jsr", "movem_to_mem") else ins.src
+        cost = _CONTROL[n][ea[0]] + (4 * abs_words if ea[0] == "abs" else 0)
+        if n.startswith("movem"):
+            cost += bin(ins.aux).count("1") * (8 if long else 4)
+        return cost
+    # with two absolute operands only their total length is known, and it is all that matters
+    src = _ea_cycles(ins.src, long, abs_words if absolute == 1 else 0)
+    dst = _ea_cycles(ins.dst, long, abs_words)
+    if n in ("move", "movea"):
+        if ins.dst[0] == "pd":
+            dst -= 2
+        return 4 + src + dst
+    if n in ("add", "sub", "and", "or", "eor"):
+        if dst_mem:
+            return (12 if long else 8) + dst
+        if n == "eor":
+            return 8 if long else 4
+        return (4 if not long else 6 if src_mem else 8) + src
+    if n in ("adda", "suba"):
+        return (8 if not long or not src_mem else 6) + src
+    if n == "cmp":
+        if ins.dst[0] == "pi":
+            return 20 if long else 12
+        return (6 if long else 4) + src
+    if n == "cmpa":
+        return 6 + src
+    if n in ("addi", "subi", "andi", "ori", "eori"):
+        return ((20 if long else 12) + dst) if dst_mem else (16 if long else 8)
+    if n == "cmpi":
+        return ((12 if long else 8) + dst) if dst_mem else (14 if long else 8)
+    if n in ("addq", "subq"):
+        if dst_mem:
+            return (12 if long else 8) + dst
+        return 8 if long or ins.dst[0] == "a" else 4
+    if n in ("clr", "neg", "negx", "not"):
+        return ((12 if long else 8) + dst) if dst_mem else (6 if long else 4)
+    if n == "tst":
+        return 4 + src
+    if n == "scc":
+        return (8 + dst) if dst_mem else 4
+    if n == "tas":
+        return (14 + dst) if dst_mem else 4
+    if n == "nbcd":
+        return (8 + dst) if dst_mem else 6
+    if n in ("abcd", "sbcd"):
+        return 18 if ins.dst[0] == "pd" else 6
+    if n in ("addx", "subx"):
+        if ins.dst[0] == "pd":
+            return 30 if long else 18
+        return 8 if long else 4
+    if n in BITOPS:
+        dst = _ea_cycles(ins.dst, False, abs_words)
+        static = ins.src[0] == "imm"
+        if n == "btst":
+            return ((8 if static else 4) + dst) if dst_mem else (10 if static else 6)
+        if dst_mem:
+            return (12 if static else 8) + dst
+        return (10 if n == "bclr" else 8) + (4 if static else 0)
+    if n in SHIFTS:
+        if dst_mem:
+            return 8 + dst
+        return (8 if long else 6) + (2 * ins.src[1] if ins.src[0] == "imm" else 0)
+    if n in ("mulu", "muls"):
+        return 38 + src
+    if n in ("divu", "divs"):
+        return src
+    if n in ("move_to_sr", "move_to_ccr"):
+        return 12 + src
+    if n == "move_from_sr":
+        return (8 + dst) if dst_mem else 6
+    raise AssertionError("no timing for %s" % n)
 
 
 class Block:
@@ -642,6 +772,8 @@ class Emitter:
             else:
                 e("r = (((s ^ 0x8000) - 0x8000) * (((%s & 0xFFFF) ^ 0x8000) - 0x8000)) & 0xFFFFFFFF" % reg)
             e("%s = r" % reg)
+            # two cycles for every one bit (unsigned) or bit change (signed) in the source
+            e("cyc += ONES[%s] * 2" % ("s" if n == "mulu" else "(s ^ (s << 1)) & 0xFFFF"))
             self.logic_flags(need, "r", 4)
         elif n in ("divu", "divs"):
             self.load(ins.src, 2, "s")
@@ -652,6 +784,8 @@ class Emitter:
             else:
                 count = "d%d & 63" % ins.src[1]
             write = self.load_modify(ins.dst, size, "t")
+            if ins.src[0] != "imm":
+                e("cyc += (%s) * 2" % count)
             e("r = sh_%s(t, %s, %d)" % (n, count, BITS[size]))
             write("r")
         elif n in BITOPS:
@@ -683,6 +817,8 @@ class Emitter:
             write("r")
         elif n == "scc":
             e("r = 0xFF if %s else 0" % COND_EXPR[ins.aux])
+            if ins.dst[0] == "d":
+                e("cyc += r & 2")
             self.store(ins.dst, 1, "r")
         elif n in ("abcd", "sbcd"):
             self.load(ins.src, 1, "s")
@@ -739,6 +875,7 @@ class Emitter:
             return True
         elif n == "bcc":
             e("if %s:" % COND_EXPR[ins.aux])
+            e("\tcyc %s 2" % ("+=" if ins.length == 2 else "-="))
             e("\treturn 0x%X" % ins.target)
             e("return 0x%X" % nxt)
             return True
@@ -752,6 +889,8 @@ class Emitter:
             e(pad + "%s = (%s & 0xFFFF0000) | r" % (reg, reg))
             e(pad + "if r != 0xFFFF:")
             e(pad + "\treturn 0x%X" % ins.target)
+            e(pad + "cyc += 2")
+            e("cyc += 2")
             e("return 0x%X" % nxt)
             return True
         elif n in ("bsr", "jsr", "jmp"):
@@ -899,14 +1038,19 @@ class Emitter:
         again = "if cyc >= event_cyc: return 0x%X" % ins.target
         if ins.name == "bcc":
             e("if not (%s): return 0x%X" % (COND_EXPR[ins.aux], nxt))
+            e("cyc %s 2" % ("+=" if ins.length == 2 else "-="))
             e(again)
         else:
             reg = "d%d" % ins.dst[1]
             if ins.aux != "f":
-                e("if %s: return 0x%X" % (COND_EXPR[ins.aux], nxt))
+                e("if %s:" % COND_EXPR[ins.aux])
+                e("\tcyc += 2")
+                e("\treturn 0x%X" % nxt)
             e("r = ((%s & 0xFFFF) - 1) & 0xFFFF" % reg)
             e("%s = (%s & 0xFFFF0000) | r" % (reg, reg))
-            e("if r == 0xFFFF: return 0x%X" % nxt)
+            e("if r == 0xFFFF:")
+            e("\tcyc += 4")
+            e("\treturn 0x%X" % nxt)
             e(again)
 
 

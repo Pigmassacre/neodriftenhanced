@@ -118,7 +118,7 @@ def main():
                              "--frames=%d" % frames, "--out=" + godot_log] + common,
                             capture_output=True, text=True)
     for line in result.stdout.splitlines():
-        if line.startswith(("ran ", "missing ")):
+        if line.startswith(("ran ", "missing ", "timing")):
             print("godot:", line)
     sys.argv = ["compare_ram", os.path.join(out, "ramlog.bin"), godot_log, str(snapshot_frame - first + 1)]
     compare_ram.main()

@@ -11,8 +11,8 @@ extends SceneTree
 ##
 ## --seedlog applies the random seeds MAME had each time the main loop left
 ## its vblank wait (see Tools/mame/harness.lua). The game steps the seed
-## while waiting, so its value depends on exact CPU timing, which is only
-## approximated here.
+## while waiting, so its value depends on exact CPU timing. The run reports
+## how often the port's own seed already agreed, as a measure of its timing.
 ##
 ## FIELD is a, b, c, d, up, down, left, right, start or coin; frames count
 ## from 0 at the snapshot. Unknown code addresses are appended to
@@ -21,6 +21,10 @@ extends SceneTree
 ## Where the main loop continues after its vblank wait, and the seed's RAM offset.
 const WAIT_EXIT := 0xB80
 const SEED := 0x430
+## One turn of the wait loop steps the seed once and takes this many CPU cycles.
+const WAIT_TURN_CYCLES := 146
+const MAX_TURNS := 300
+const UNKNOWN_TURNS := 1 << 20
 const P1_BITS := {"up": 1, "down": 2, "left": 4, "right": 8, "a": 16, "b": 32, "c": 64, "d": 128}
 
 
@@ -60,6 +64,8 @@ func _init() -> void:
 		return
 	var exit_seeds := {}
 	var frame_box := [0]
+	var timing := [0, 0]
+	var offsets: Array[int] = []
 	if seedlog_path != "":
 		var log := FileAccess.open(seedlog_path, FileAccess.READ)
 		log.big_endian = true
@@ -70,6 +76,13 @@ func _init() -> void:
 		machine.hook_block(WAIT_EXIT, func() -> void:
 			var seed: Variant = exit_seeds.get(first + frame_box[0])
 			if seed != null:
+				# the seed counts the turns of the wait loop, so it agreeing
+				# with MAME's means the frame's work took the same time
+				timing[1] += 1
+				var turns := _turns_apart(machine.ram.decode_u16(SEED), seed)
+				if turns == 0:
+					timing[0] += 1
+				offsets.append(turns)
 				machine.ram.encode_u16(SEED, seed))
 	var out := FileAccess.open(out_path, FileAccess.WRITE) if out_path != "" else null
 	var sound_out := FileAccess.open(sound_path, FileAccess.WRITE) if sound_path != "" else null
@@ -103,6 +116,12 @@ func _init() -> void:
 			out.store_buffer(MachineLoader._swap_words(machine.ram))
 	var elapsed := (Time.get_ticks_usec() - started) / 1000.0
 	print("ran %d frames in %.0f ms (%.2f ms/frame)" % [done, elapsed, elapsed / maxi(done, 1)])
+	if timing[1] > 0:
+		offsets.sort()
+		var far := offsets.count(UNKNOWN_TURNS)
+		print("timing: the wait for the vertical blank ended on MAME's seed in %d of %d frames; turns of the wait loop (%d cycles each) more than MAME: median %d, nine in ten frames within %d to %d; %d frames further than %d off"
+				% [timing[0], timing[1], WAIT_TURN_CYCLES, offsets[offsets.size() / 2],
+				offsets[offsets.size() / 20], offsets[offsets.size() * 19 / 20 - far], far, MAX_TURNS])
 	if machine.missing_block >= 0:
 		print("missing code at %06X" % machine.missing_block)
 		var seeds := FileAccess.open(MachineLoader.repo_dir().path_join("data/game/seeds.txt"),
@@ -113,6 +132,27 @@ func _init() -> void:
 		seeds.seek_end()
 		seeds.store_line("%06X" % machine.missing_block)
 	quit(0 if not machine.halted else 2)
+
+
+## How many more turns of the wait loop led to `ours` than to `theirs`
+## (negative for fewer), or UNKNOWN_TURNS if they are far apart.
+func _turns_apart(ours: int, theirs: int) -> int:
+	var ahead := theirs
+	var behind := ours
+	for turns in MAX_TURNS + 1:
+		if ahead == ours:
+			return turns
+		if behind == theirs:
+			return -turns
+		ahead = _step_seed(ahead)
+		behind = _step_seed(behind)
+	return UNKNOWN_TURNS
+
+
+## The seed step of the game's routine at $10B8.
+func _step_seed(seed: int) -> int:
+	var rotated := ((seed << 2) | (seed >> 14)) & 0xFFFF
+	return (seed + rotated + 0x3711) & 0xFFFF
 
 
 func _dump(machine: RefCounted, path: String, frame: int) -> void:

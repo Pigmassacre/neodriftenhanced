@@ -45,9 +45,9 @@ func _ready() -> void:
 	_strip_bytes.resize(STRIP_TILES * STRIP_ROWS * 4)
 	_strips_tex = ImageTexture.create_from_image(
 			Image.create_from_data(STRIP_TILES, STRIP_ROWS, false, Image.FORMAT_RGBA8, _strip_bytes))
-	_cell_bytes.resize(40 * 32 * 4)
+	_cell_bytes.resize(80 * 32 * 4)
 	_cells_tex = ImageTexture.create_from_image(
-			Image.create_from_data(40, 32, false, Image.FORMAT_RGBA8, _cell_bytes))
+			Image.create_from_data(80, 32, false, Image.FORMAT_RGBA8, _cell_bytes))
 
 	_backdrop = ColorRect.new()
 	_backdrop.size = SCREEN
@@ -203,8 +203,23 @@ func refresh() -> void:
 	_sprite_material.set_shader_parameter("auto_anim", machine.auto_anim_counter)
 	_sprite_material.set_shader_parameter("auto_anim_enabled", (machine.lspc_mode & 8) == 0)
 
+	# Text changed while the picture was being drawn shows the old text above
+	# the raster line of the change. The texture's right half holds the old
+	# words, and a cell's fourth byte the screen line where the new one starts.
+	# Going backwards leaves a cell's earliest change in place.
+	var old_text := {}
+	for index in range(machine.midframe_text.size() - 1, -1, -1):
+		var change: Vector3i = machine.midframe_text[index]
+		old_text[change.y] = change
 	for cell in 40 * 32:
-		var word := vram[0x7000 + (cell % 40) * 32 + cell / 40]
-		_cell_bytes.encode_u32(cell * 4, (word & 0xFFF) | ((word >> 12) << 16))
-	_cells_tex.update(Image.create_from_data(40, 32, false, Image.FORMAT_RGBA8, _cell_bytes))
+		var address := 0x7000 + (cell % 40) * 32 + cell / 40
+		var word := vram[address]
+		var out := (cell / 40 * 80 + cell % 40) * 4
+		var split := 0
+		if old_text.has(address):
+			var change: Vector3i = old_text[address]
+			split = clampi(change.x - FIRST_LINE, 0, int(SCREEN.y))
+			_cell_bytes.encode_u32(out + 160, (change.z & 0xFFF) | ((change.z >> 12) << 16))
+		_cell_bytes.encode_u32(out, (word & 0xFFF) | ((word >> 12) << 16) | (split << 24))
+	_cells_tex.update(Image.create_from_data(80, 32, false, Image.FORMAT_RGBA8, _cell_bytes))
 	_fix_material.set_shader_parameter("fix_tex", _fix_cart if machine.fix_from_cart else _fix_bios)

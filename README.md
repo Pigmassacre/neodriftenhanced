@@ -29,8 +29,9 @@ Keys: arrows, `Z X C V` = buttons A B C D, `1` = start, `5` = insert coin.
   registers, memory map, video registers, raster timer, interrupts.
 - `Project/video/` draws the machine's video RAM (sprites with the hardware's
   shrink tables, text layer, palettes) with shaders.
-- `Project/sound/` runs the game's own Z80 sound driver and plays its sampled
-  sounds. The chip's square-wave, FM and ADPCM-B parts make no sound yet.
+- `Project/sound/` runs the game's own Z80 sound driver and synthesises what
+  it plays on the sound chip (FM, square waves and noise, sampled sound).
+  The chip's seventh sampled channel (ADPCM-B) makes no sound yet.
 - The game starts from a machine snapshot taken in MAME just after boot
   (`Tools/make_start_snapshot.py`), so the BIOS power-on tests are not modelled.
 

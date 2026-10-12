@@ -22,13 +22,18 @@ The owner agreed to target the **Practice Stage first**, then Stage 1.
 
 | Area | State | Evidence |
 |---|---|---|
-| Game logic (recompiled 68000) | Practice stage, menus, attract mode | `verify_session.py practice_steer`: 4042 of 4045 frames of work RAM identical to MAME |
+| Game logic (recompiled 68000) | Practice stage, menus, attract mode | `verify_session.py practice_steer`: 4041 of 4045 frames of work RAM identical to MAME |
 | Video (sprites, shrink, text layer, palettes, mid-frame background move) | Same range | 40 of 40 screenshots pixel-exact |
-| Sound driver (Z80 + chip timers) | Runs the real driver | `compare_ym.py`: 1835 of 1859 chip register writes match MAME in order |
-| Sampled sound (ADPCM-A) | Plays through Godot | Recorded output is non-silent from the title screen on; **not checked by ear or against MAME's audio** |
+| Stage 1, continue, game over, attract mode | Runs | `verify_session.py stage1_hold`: 9595 of 9600 frames of work RAM identical, 46 of 48 screenshots pixel-exact |
+| CPU timing | 68000 timing tables in `cycles()` in `gen.py` | Each replay reports it: a frame's work ends within about one turn of the game's wait loop (146 of 202752 cycles) of MAME's at the median, nine frames in ten within 8 turns, always slightly early |
+| Sound driver (Z80 + chip timers) | Runs the real driver | `compare_ym.py`: 3318 of 3318 chip register writes match MAME in order, a median of 0.00 ms apart (0.57 ms at most) |
+| Sound chip (FM, square waves/noise, sampled channels, stereo) | Synthesised in `Project/sound/ym2610.gd` | `compare_audio.py`: MAME's own chip writes replayed into the model leave at most -38 dB of MAME's recording unexplained in any second; levels match. **Not checked by ear** |
 
-The few non-identical RAM frames are single frames at screen transitions that
-re-converge; believed (not proven) to come from approximate CPU timing.
+The few non-identical RAM frames are single frames that re-converge. The two
+screenshots that still differ (2 and 21 pixels, frames 7000 and 13600 of
+`stage1_hold`) are text the game rewrites while the picture is being drawn:
+the port splits such a text cell at the raster line of the write
+(`midframe_text`), and its timing is a line or so early there.
 
 ## Verification workflow — use it for every change
 
@@ -45,10 +50,21 @@ python3 verify_session.py practice_hold --shots
   the seed from MAME each time the main loop leaves its vblank wait (`$B80`),
   because the game steps the seed while idling and that depends on exact
   CPU timing.
-- Sound: record chip writes in MAME with a job containing `ymlog = {first, last}`
-  (see `Tools/mame/harness.lua`), then
-  `godot --headless --path Project --script res://tools/sound_replay.gd -- --ymlog=IN --out=OUT`
-  and `python3 Tools/compare_ym.py IN OUT <frame after a "cmd 03">`.
+- Sound, three checks (the job in `data/verify/sound/job.lua` is the steering
+  session with `ymlog = {1, last}`; add `-wavwrite` for MAME's own recording):
+  ```sh
+  Tools/mame/run.sh data/verify/sound/job.lua -wavwrite $PWD/data/verify/sound/mame.wav -seconds_to_run 100
+  G="Godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path Project --script"
+  # chip model alone: MAME's timed writes in, sound out
+  $G res://tools/synth_replay.gd -- --ymlog=$PWD/data/verify/sound/ymlog.txt --wav=$PWD/data/verify/sound/godot.wav
+  python3 Tools/compare_audio.py data/verify/sound/mame.wav data/verify/sound/godot.wav
+  # driver: MAME's timed sound commands in, chip writes (and sound) out
+  $G res://tools/sound_replay.gd -- --ymlog=$PWD/data/verify/sound/ymlog.txt --out=$PWD/data/verify/sound/godot_ym.txt
+  python3 Tools/compare_ym.py data/verify/sound/ymlog.txt data/verify/sound/godot_ym.txt 520
+  ```
+  Driver plus chip together (`sound_replay.gd --wav`, `compare_audio.py
+  --true-rate`) matches MAME in level every second but not sample for sample:
+  a write landing one chip sample (18 us) away shifts a waveform.
 - When a frame differs, `Tools/compare_video.py` (video RAM word by word) and
   `Tools/render.py` (reference renderer, exact on MAME dumps) tell you whether
   the machine state or the Godot drawing code is wrong.
@@ -56,39 +72,38 @@ python3 verify_session.py practice_hold --shots
 ## Remaining work, roughly in priority order
 
 ### Sound
-1. **Check the sampled sound by ear and against MAME** (`mame -wavwrite`).
-   Unknowns: the exact end-address rule for ADPCM-A samples (inclusive end
-   block assumed), and whether one looping engine sample restarts ~50 frames
-   later than in MAME (seen around MAME frame 3193 of the steering session —
-   investigate the end-of-sample flag timing in `sound_board.gd`).
-2. **SSG** (three square-wave channels, noise, envelope): the driver writes it
-   (466 writes in the test session) but nothing is synthesised. An
-   `AudioStreamGenerator` fed from the register state is the obvious route.
-3. **FM** (58 writes in the test session, so little used) and **ADPCM-B**
-   (21 writes): not synthesised.
-4. **Panning**: the left/right bits only gate audibility; no stereo placement.
-5. **Speed**: the Z80 interpreter costs about 10 ms per frame, so it runs on a
-   worker thread. The driver's main loop busy-polls a command queue
-   (`$013D` onwards in `data/dasm/m1.asm`); skipping that idle loop, or
-   recompiling the driver like the 68000 program, would cut this a lot.
-6. The sound board starts the cartridge driver from reset; on hardware the
+1. **Listen to it.** Everything above is measured against MAME, nobody has
+   heard it.
+2. **ADPCM-B** (the seventh sampled channel) is not synthesised. The driver
+   only resets it in the sessions recorded so far; `YM2610.unvoiced_adpcm_b`
+   counts writes to it.
+3. **FM vibrato/tremolo** is written from memory of MAME's chip model and
+   never exercised: the driver has not enabled it yet. Channel 3's special
+   modes and the SSG-style envelope shapes are not modelled for the same
+   reason (see the header of `ym_fm_channel.gd`).
+4. The sound board starts the cartridge driver from reset; on hardware the
    BIOS's own driver runs first. No effect seen, but it is a difference.
+5. Sound is rendered one video frame behind and queued about 50 ms ahead
+   (`SoundBoard.QUEUE_TARGET`).
 
 ### Game coverage
-7. **Stage 1 and beyond are untested.** Add sessions that play on, run them,
-   and fix what turns up. If play reaches untranslated code the game stops and
+7. **Stage 2 and beyond are untested**, and Stage 1 only with the accelerator
+   held (`stage1_hold`). Add sessions that play on, run them, and fix what
+   turns up. If play reaches untranslated code the game stops and
    appends the address to `data/game/seeds.txt`; re-run
    `Tools/recomp/build_code.py`. If a new *pattern* of missed code shows up,
-   teach `Program.explore` in `Tools/recomp/gen.py` about it rather than
-   relying on the seed file (see the existing rules for jump tables, offset
-   tables, pointer scans and unrolled loops).
+   teach `Program.explore` in `Tools/recomp/gen.py` or the scans in
+   `build_code.py` about it rather than relying on the seed file (existing
+   rules: jump tables, offset tables, pointer scans, long routines in pointer
+   tables, unrolled loops).
 8. Other cars, two-player, service/test mode: untested.
 
 ### Machine accuracy
-9. **CPU cycle counts are rough** (`cycles()` in `gen.py`). Consequences:
-   slowdown will not match hardware, free play gets different random numbers
-   than MAME, and the transition blips above. A proper 68000 timing table
-   would fix most of it.
+9. **CPU timing is close but not exact** (see the table). What is left is
+   probably the handful of 68000 timing details the tables do not cover
+   (interrupts only being taken between translated blocks, item 12, is one).
+   Free play still gets different random numbers than MAME unless the seed
+   is synced, because the seed counts the turns of the wait loop exactly.
 10. **Cold boot**: the game starts from a MAME snapshot
     (`Tools/make_start_snapshot.py`) because the BIOS power-on tests (clock
     chip, backup RAM, sound CPU handshake) are not modelled. So setup needs
@@ -116,7 +131,9 @@ python3 verify_session.py practice_hold --shots
       pixel-exact including zoom. It is the starting point for rendering
       beyond the original 320x224 view.
     - Full disassemblies are generated into `data/dasm/` (`p1.asm`,
-      `bios.asm`, `m1.asm`) with MAME's debugger; `Tools/dasm.py` prints a
+      `bios.asm`, `m1.asm`) with MAME's debugger. **`m1.asm` is the BIOS's
+      sound driver, not the cartridge's** (the cartridge driver has no
+      listing yet; its idle loop is at `$0133`, see `sound_board.gd`); `Tools/dasm.py` prints a
       range of the program listing. MAME's linear listing is misaligned in
       places — the recompiler's own decoder (`Tools/recomp/m68k.py`) is the
       authority.
@@ -135,6 +152,12 @@ python3 verify_session.py practice_hold --shots
   callbacks are silent, and taps on work RAM must be installed after reset.
 - **A sprite's "rows" is its height on screen, not its tile count**: a
   vertically shrunk sprite reads further down its tile strip.
+- **MAME runs its sound chip stream at 55555 samples a second**, not the
+  chip's true 55555.56, and its square-wave tones start high. Both matter
+  only when comparing sample for sample (`synth_replay.gd`, `ym_ssg.gd`).
+- **Log times with enough digits.** Microsecond timestamps put some chip
+  writes on the wrong chip sample and looked like a decoder bug.
+- **awk under a Swedish locale reads `8.5` as 8.** Use `LC_ALL=C`.
 - Godot resolves relative paths from the project folder; pass absolute paths
   to the tools under `Project/tools/`.
 - The program ROM file is word-swapped, with its second megabyte at bus
@@ -142,6 +165,6 @@ python3 verify_session.py practice_hold --shots
 
 ## Repository state
 
-- Branch `practice-stage-background` (not merged to `main`).
+- Work is on `main`; `practice-stage-background` is an older state of it.
 - `Godot` in the repo root is a symlink to the editor binary's folder
   (`AGENTS.md` expects it there); it is git-ignored.
