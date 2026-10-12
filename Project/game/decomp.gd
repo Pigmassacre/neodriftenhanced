@@ -5,6 +5,14 @@ extends RefCounted
 
 const GROUPS: Array[GDScript] = [
 	preload("res://game/car.gd"),
+	preload("res://game/sprite_object.gd"),
+	preload("res://game/random.gd"),
+	preload("res://game/course_objects.gd"),
+	preload("res://game/sound_requests.gd"),
+	preload("res://game/ground.gd"),
+	preload("res://game/race_clock.gd"),
+	preload("res://game/engine_sound.gd"),
+	preload("res://game/race.gd"),
 ]
 
 

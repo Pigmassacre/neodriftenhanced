@@ -28,7 +28,9 @@ Keys: arrows, `Z X C V` = buttons A B C D, `1` = start, `5` = insert coin.
   (`data/game/code/`), one function per basic block.
 - `Project/game/` is the game hand-written in readable GDScript, routine by
   routine, each replacing its translated original and checked against it.
-  So far: the car's driving.
+  So far: the car, the scenery and effects on the course, the ground lookup,
+  the race clock and the sound queue (about a seventh of the code that runs). Hand-written code takes no CPU time, so the game no
+  longer slows down where the original did.
 - `Project/machine/neogeo_machine.gd` is the machine that code runs on:
   registers, memory map, video registers, raster timer, interrupts.
 - `Project/video/` draws the machine's video RAM (sprites with the hardware's

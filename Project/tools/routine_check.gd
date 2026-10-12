@@ -9,6 +9,8 @@ extends RefCounted
 ## takes no CPU time, and where the game's work for a frame does not fit in
 ## the frame that changes what happens. So the run as a whole can still be
 ## compared with MAME, and shows up a caller that reads a scratch register.
+## A call that an interrupt arrives in is left to the original alone, since
+## hand-written code cannot be interrupted part way.
 ##
 ## The stack below the routine's return address is not compared: the original
 ## leaves return addresses and saved registers there that nothing reads.
@@ -16,15 +18,30 @@ extends RefCounted
 const REGISTERS: Array[StringName] = [&"d0", &"d1", &"d2", &"d3", &"d4", &"d5", &"d6", &"d7",
 		&"a0", &"a1", &"a2", &"a3", &"a4", &"a5", &"a6", &"a7"]
 const FLAGS: Array[StringName] = [&"fn", &"fz", &"fv", &"fc", &"fx"]
-const STATE: Array[StringName] = [&"vram_addr", &"vram_mod", &"sound_command", &"ipl", &"cyc"]
+const STATE: Array[StringName] = [&"vram_addr", &"vram_mod", &"sound_command", &"ipl", &"cyc",
+		&"lspc_mode", &"timer_reload", &"palette_bank", &"timer_fire_cyc", &"irq1_pending",
+		&"irq2_pending", &"recheck", &"event_cyc"]
+## Of those, what must come out the same.
+const COMPARED_STATE: Array[StringName] = [&"vram_addr", &"vram_mod", &"sound_command",
+		&"lspc_mode", &"timer_reload", &"palette_bank"]
+## And what depends on when things happened, taken from the original.
+const TIMED_STATE: Array[StringName] = [&"cyc", &"timer_fire_cyc", &"irq1_pending", &"irq2_pending",
+		&"recheck", &"event_cyc"]
 const DEAD_STACK := 0x200
 const MAX_BLOCKS := 2000000
 const MAX_REPORTS := 5
 
 var machine: NeoGeoMachine
-## Per routine address: [name, calls, mismatches].
+## Per routine address: [name, calls, mismatches, calls an interrupt fell in].
 var results := {}
 var frame := 0
+var _depth := 0
+var _in_hand_written := false
+# Copies of video RAM and the palettes as they were when `video_writes` was
+# `_video_copied`: they are large and seldom written, so states share them.
+var _vram := PackedInt32Array()
+var _palette := PackedInt32Array()
+var _video_copied := -1
 
 
 func _init(checked: NeoGeoMachine) -> void:
@@ -46,13 +63,14 @@ func report() -> bool:
 		var entry: Array = results[address]
 		if entry[2] > 0:
 			good = false
-		print("routine %06X %s: %d calls, %d differ" % [address, entry[0], entry[1], entry[2]])
+		print("routine %06X %s: %d calls, %d differ%s" % [address, entry[0], entry[1], entry[2],
+				", %d left to the original (interrupted)" % entry[3] if entry[3] > 0 else ""])
 	return good
 
 
 func _check(address: int, routine: Callable, scratch: Array) -> void:
 	var original := machine.block(address)
-	var entry := [routine.get_method(), 0, 0]
+	var entry := [routine.get_method(), 0, 0, 0]
 	results[address] = entry
 	# what to compare of each register: all of it, its low word, or nothing
 	var compared := {}
@@ -65,10 +83,19 @@ func _check(address: int, routine: Callable, scratch: Array) -> void:
 		for flag in FLAGS:
 			compared[flag] = 1
 	machine.set_block(address, func() -> int:
+		if _in_hand_written:
+			# Called by a hand-written routine that is itself being checked:
+			# this one was checked when the original made the same call.
+			routine.call()
+			var back_to := machine.r32(machine.a7) & 0xFFFFFF
+			machine.a7 = (machine.a7 + 4) & 0xFFFFFFFF
+			return back_to
 		entry[1] += 1
 		var before := _save()
 		var stack := machine.a7
 		var back := machine.r32(stack) & 0xFFFFFF
+		var due := machine.event_cyc
+		_depth += 1
 		var pc: int = original.call()
 		var blocks := 0
 		while not (pc == back and machine.a7 == ((stack + 4) & 0xFFFFFFFF)):
@@ -77,11 +104,29 @@ func _check(address: int, routine: Callable, scratch: Array) -> void:
 			if code == null or machine.halted or blocks > MAX_BLOCKS:
 				push_error("routine %06X did not return (at %06X)" % [address, pc])
 				machine.halted = true
+				_depth -= 1
 				return pc
 			pc = code.call()
+			if machine.cyc >= due and not machine.halted:
+				# An interrupt arrives inside the routine. Hand-written code
+				# cannot be interrupted, so this call is left to the original,
+				# one block at a time as usual; the routines it calls are
+				# still checked. (The original may even be waiting for the
+				# interrupt.)
+				return _leave_to_original(entry, before, original)
+		_depth -= 1
+		if machine.cyc >= due or (machine.recheck and _interrupt_waits()):
+			_depth += 1
+			return _leave_to_original(entry, before, original)
 		var wanted := _save()
+		# what the original logged, with the times it logged them at
+		var sound_times := machine.sound_log_times.slice(before[&"sound"])
+		var moved_y := machine.midframe_y.slice(before[&"midframe_y"])
+		var moved_text := machine.midframe_text.slice(before[&"midframe_text"])
 		_restore(before)
+		_in_hand_written = true
 		routine.call()
+		_in_hand_written = false
 		machine.a7 = (machine.a7 + 4) & 0xFFFFFFFF
 		var difference := _compare(wanted, compared, stack)
 		if difference != "":
@@ -89,14 +134,26 @@ func _check(address: int, routine: Callable, scratch: Array) -> void:
 			if entry[2] <= MAX_REPORTS:
 				print("routine %06X %s, frame %d, call %d: %s\n  entered with %s" % [
 						address, entry[0], frame, entry[1], difference, _registers(before)])
-		machine.cyc = wanted[&"cyc"]
+		for name in TIMED_STATE:
+			machine.set(name, wanted[name])
+		if difference == "":
+			machine.sound_log_times.resize(before[&"sound"])
+			machine.sound_log_times.append_array(sound_times)
+		machine.midframe_y.resize(before[&"midframe_y"])
+		machine.midframe_y.append_array(moved_y)
+		machine.midframe_text.resize(before[&"midframe_text"])
+		machine.midframe_text.append_array(moved_text)
 		return pc)
 
 
 func _save() -> Dictionary:
+	if machine.video_writes != _video_copied:
+		_vram = machine.vram.duplicate()
+		_palette = machine.palette.duplicate()
+		_video_copied = machine.video_writes
 	var state := {
-		&"ram": machine.ram.duplicate(), &"vram": machine.vram.duplicate(),
-		&"palette": machine.palette.duplicate(), &"sound": machine.sound_log.size(),
+		&"ram": machine.ram.duplicate(), &"vram": _vram, &"palette": _palette,
+		&"video": machine.video_writes, &"sound": machine.sound_log.size(),
 		&"midframe_y": machine.midframe_y.size(), &"midframe_text": machine.midframe_text.size(),
 	}
 	for name in REGISTERS + FLAGS + STATE:
@@ -106,8 +163,15 @@ func _save() -> Dictionary:
 
 func _restore(state: Dictionary) -> void:
 	machine.ram = state[&"ram"].duplicate()
-	machine.vram = state[&"vram"].duplicate()
-	machine.palette = state[&"palette"].duplicate()
+	if machine.video_writes != state[&"video"]:
+		machine.vram = state[&"vram"].duplicate()
+		machine.palette = state[&"palette"].duplicate()
+		# a count no earlier state has, standing for these contents
+		machine.video_writes += 1
+		_vram = state[&"vram"]
+		_palette = state[&"palette"]
+		_video_copied = machine.video_writes
+		state[&"video"] = machine.video_writes
 	machine.sound_log.resize(state[&"sound"])
 	machine.sound_log_times.resize(state[&"sound"])
 	machine.midframe_y.resize(state[&"midframe_y"])
@@ -121,14 +185,15 @@ func _compare(wanted: Dictionary, compared: Dictionary, stack: int) -> String:
 	for name: StringName in compared:
 		if (machine.get(name) ^ wanted[name]) & compared[name]:
 			found.append("%s is %X, should be %X" % [name, machine.get(name), wanted[name]])
-	for name: StringName in [&"vram_addr", &"vram_mod", &"sound_command"]:
+	for name in COMPARED_STATE:
 		if machine.get(name) != wanted[name]:
 			found.append("%s is %X, should be %X" % [name, machine.get(name), wanted[name]])
 	if machine.sound_log.size() != wanted[&"sound"]:
 		found.append("sound commands sent differ")
 	var ram: PackedByteArray = wanted[&"ram"]
-	if machine.ram != ram:
-		var top := (stack & 0xFFFF) + 4
+	var top := (stack & 0xFFFF) + 4
+	var dead := maxi(top - DEAD_STACK, 0)
+	if machine.ram.slice(0, dead) != ram.slice(0, dead) or machine.ram.slice(top) != ram.slice(top):
 		var shown := 0
 		for offset in range(0, 0x10000, 2):
 			if offset >= top - DEAD_STACK and offset < top:
@@ -141,12 +206,12 @@ func _compare(wanted: Dictionary, compared: Dictionary, stack: int) -> String:
 		if shown > 4:
 			found.append("and %d more words" % (shown - 4))
 	var vram: PackedInt32Array = wanted[&"vram"]
-	if machine.vram != vram:
+	if machine.video_writes != wanted[&"video"] and machine.vram != vram:
 		for index in vram.size():
 			if machine.vram[index] != vram[index]:
 				found.append("video RAM %04X is %04X, should be %04X" % [index, machine.vram[index], vram[index]])
 				break
-	if machine.palette != wanted[&"palette"]:
+	if machine.video_writes != wanted[&"video"] and machine.palette != wanted[&"palette"]:
 		found.append("palettes differ")
 	return ", ".join(found)
 
@@ -156,3 +221,14 @@ func _registers(state: Dictionary) -> String:
 	for name in REGISTERS:
 		text.append("%s=%X" % [name, state[name]])
 	return " ".join(text)
+
+
+func _interrupt_waits() -> bool:
+	return machine.irq1_pending or machine.irq2_pending
+
+
+func _leave_to_original(entry: Array, before: Dictionary, original: Callable) -> int:
+	_depth -= 1
+	entry[3] += 1
+	_restore(before)
+	return original.call()

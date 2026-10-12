@@ -66,6 +66,11 @@ var cyc := 0
 var event_cyc := 0
 var frame_start := 0
 var _next_frame := -1
+## When, in this frame, the vertical blank interrupt and the timer reload are
+## still to come (-1 once they have), and when the frame ends.
+var _irq_cyc := -1
+var _reload_cyc := -1
+var _deadline := 0
 ## Added to `cyc`, gives a count that is a multiple of ten where an interrupt
 ## handler starts. The phase is arbitrary, as it is from one power-on to the
 ## next; a snapshot sets it to what MAME had (see MachineLoader).
@@ -85,6 +90,9 @@ var vram := PackedInt32Array()
 var palette := PackedInt32Array()
 
 # video registers
+## Counts writes to video RAM and the palettes (tools/routine_check.gd uses
+## it to tell whether they changed).
+var video_writes := 0
 var vram_addr := 0
 var vram_mod := 0
 var lspc_mode := 0
@@ -193,14 +201,23 @@ func replace_routine(address: int, routine: Callable) -> void:
 
 
 ## Runs the routine at `address` until it returns, for hand-written code
-## calling a routine that is still translated. Interrupts wait until the
-## hand-written code itself returns.
+## calling a routine that is still translated. Interrupts are taken inside
+## it as usual, and if it runs past the end of the frame (the original waits
+## for the vertical blank in places) the next frame starts inside it: the
+## frame that `run_frame` was running is then twice as long.
 func call_routine(address: int) -> void:
 	var stack := a7
 	a7 = (a7 - 4) & 0xFFFFFFFF
 	w32(a7, CALL_RETURN)
 	var at := address
 	while not (at == CALL_RETURN and a7 == stack):
+		if cyc >= event_cyc or recheck:
+			pc = at
+			_fire_timer()
+			if cyc >= _deadline:
+				_begin_frame()
+			_take_events()
+			at = pc
 		var code: Variant = _table.get(at)
 		if code == null or halted:
 			missing_block = at
@@ -213,37 +230,9 @@ func call_routine(address: int) -> void:
 
 ## Runs one video frame, starting where the vertical blank begins.
 func run_frame() -> void:
-	# The last block of a frame runs a little past its end; the next frame
-	# still starts on time.
-	frame_start = _next_frame if (_next_frame >= 0 and cyc >= _next_frame
-			and cyc - _next_frame < CYCLES_PER_LINE) else cyc
-	_next_frame = frame_start + CYCLES_PER_FRAME
-	midframe_y.clear()
-	midframe_text.clear()
-	_tick_auto_anim()
-	var irq_cyc := frame_start + VBLANK_IRQ_DELAY
-	var reload_cyc := frame_start + VBLANK_RELOAD_DELAY
-	var deadline := frame_start + CYCLES_PER_FRAME
-	while cyc < deadline and not halted:
-		if irq_cyc >= 0 and cyc >= irq_cyc:
-			irq1_pending = true
-			_irq1_cyc = irq_cyc
-			irq_cyc = -1
-		if reload_cyc >= 0 and cyc >= reload_cyc:
-			if lspc_mode & 0x40:
-				timer_fire_cyc = reload_cyc + (timer_reload + 1) * 2
-			reload_cyc = -1
-		event_cyc = deadline
-		if irq_cyc >= 0:
-			event_cyc = irq_cyc
-		elif reload_cyc >= 0:
-			event_cyc = reload_cyc
-		if timer_fire_cyc >= 0 and timer_fire_cyc < event_cyc:
-			event_cyc = timer_fire_cyc
-		if not _service_interrupts():
-			# an interrupt has to wait for the next instruction
-			event_cyc = cyc + 1
-		recheck = false
+	_begin_frame()
+	while cyc < _deadline and not halted:
+		_take_events()
 		if stopped:
 			cyc = maxi(cyc, event_cyc)
 		else:
@@ -256,14 +245,56 @@ func run_frame() -> void:
 					halted = true
 					return
 				pc = block.call()
-		if timer_fire_cyc >= 0 and cyc >= timer_fire_cyc:
-			if lspc_mode & 0x10:
-				irq2_pending = true
-				_irq2_cyc = timer_fire_cyc
-			if lspc_mode & 0x80:
-				timer_fire_cyc += (timer_reload + 1) * 2
-			else:
-				timer_fire_cyc = -1
+		_fire_timer()
+
+
+func _begin_frame() -> void:
+	# The last block of a frame runs a little past its end; the next frame
+	# still starts on time.
+	frame_start = _next_frame if (_next_frame >= 0 and cyc >= _next_frame
+			and cyc - _next_frame < CYCLES_PER_LINE) else cyc
+	_next_frame = frame_start + CYCLES_PER_FRAME
+	midframe_y.clear()
+	midframe_text.clear()
+	_tick_auto_anim()
+	_irq_cyc = frame_start + VBLANK_IRQ_DELAY
+	_reload_cyc = frame_start + VBLANK_RELOAD_DELAY
+	_deadline = frame_start + CYCLES_PER_FRAME
+
+
+## Raises what has come due, finds when the next event is (`event_cyc`) and
+## lets the processor take an interrupt that is waiting.
+func _take_events() -> void:
+	if _irq_cyc >= 0 and cyc >= _irq_cyc:
+		irq1_pending = true
+		_irq1_cyc = _irq_cyc
+		_irq_cyc = -1
+	if _reload_cyc >= 0 and cyc >= _reload_cyc:
+		if lspc_mode & 0x40:
+			timer_fire_cyc = _reload_cyc + (timer_reload + 1) * 2
+		_reload_cyc = -1
+	event_cyc = _deadline
+	if _irq_cyc >= 0:
+		event_cyc = _irq_cyc
+	elif _reload_cyc >= 0:
+		event_cyc = _reload_cyc
+	if timer_fire_cyc >= 0 and timer_fire_cyc < event_cyc:
+		event_cyc = timer_fire_cyc
+	if not _service_interrupts():
+		# an interrupt has to wait for the next instruction
+		event_cyc = cyc + 1
+	recheck = false
+
+
+func _fire_timer() -> void:
+	if timer_fire_cyc >= 0 and cyc >= timer_fire_cyc:
+		if lspc_mode & 0x10:
+			irq2_pending = true
+			_irq2_cyc = timer_fire_cyc
+		if lspc_mode & 0x80:
+			timer_fire_cyc += (timer_reload + 1) * 2
+		else:
+			timer_fire_cyc = -1
 
 
 ## The game's main loop waits for the vertical blank at WAIT_LOOP, stepping
@@ -486,6 +517,7 @@ func _io_write(address: int, value: int) -> void:
 					if line >= FIRST_VISIBLE_LINE and line < VBLANK_LINE:
 						midframe_text.append(Vector3i(line, vram_addr, vram[vram_addr]))
 				vram[vram_addr] = value
+				video_writes += 1
 				vram_addr = (vram_addr & 0x8000) | ((vram_addr + vram_mod) & 0x7FFF)
 			4:
 				vram_mod = value
@@ -505,6 +537,7 @@ func _io_write(address: int, value: int) -> void:
 					irq1_pending = false
 	elif region >= 0x40 and region < 0x80:
 		palette[palette_bank * 0x1000 + ((address & 0x1FFE) >> 1)] = value
+		video_writes += 1
 	elif region >= 0xD0 and region < 0xE0:
 		if not sram_locked:
 			sram.encode_u16(address & 0xFFFF, value)

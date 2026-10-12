@@ -21,8 +21,9 @@ decompilation needs it.
    whole game runs.
 2. Keep rendering, input and audio native Godot.
 3. Hand-write the game routine by routine in `Project/game/`, each checked
-   against its translated original. **Started**: 40 routines (895 of about 16700
-   instructions), the car's driving.
+   against its translated original. **Under way**: 110 routines (2396 of
+   16729 instructions): the car and its engine sound, the things on the
+   course, the ground lookup, the race clock, the sound queue.
 
 Nothing derived from the ROMs may be committed: `data/`, `neodrift/` and
 `neogeo/` are git-ignored on purpose. The hand-written code in
@@ -49,7 +50,20 @@ How a hand-written routine lives among translated ones:
   the original would. `scratch()` names the registers it leaves different.
 - It calls routines that are still translated with `m.call_routine(address)`,
   and hand-written ones as ordinary methods.
-- Hand-written code takes no CPU time.
+- Hand-written code takes no CPU time. **The owner does not want the
+  original's slowdown kept** (asked 2026-10-12), so nothing charges
+  artificial time for it; see "Three things to know" below.
+- Hand-written code itself cannot be interrupted part way and must never
+  wait for an interrupt. The original's sound request did (`$15256`, when
+  its queue of eight is full); `sound_requests.gd` keeps the overflow in a
+  list instead.
+- Translated code called from hand-written code does take interrupts
+  (`call_routine` handles the frame's events as `run_frame` does). Some of
+  it waits for the vertical blank: the sprite builder `$1229E` and the
+  ground scroll `$13546` wait until the interrupt has taken their last
+  output. If that runs past the end of the frame, the next frame begins
+  inside the call and that `run_frame` lasts two frames, which is the
+  original dropping a frame.
 
 Workflow for a routine:
 
@@ -65,43 +79,109 @@ reports any difference in work RAM, video RAM, palettes, sound commands or
 registers, with the registers the call started from. The run then goes on
 from the hand-written outcome at the original's time, so the usual
 comparison of the whole session with MAME still holds, and a caller that
-depends on a "scratch" register shows up there. **State: all 40 routines
-agree on every call of all nine sessions (1.3 million calls), and the
-sessions match MAME exactly as far as the translation alone does.**
-Branches that no session takes are unchecked, though: the listing marks
-them "ran 0 times" (driving backwards through a gate, for one). A session
-that takes them is the way to check them.
+depends on a "scratch" register shows up there. A call that an interrupt
+arrives in is not compared: it is left to the original alone, block by
+block as usual (the report says how many; the routines it calls are still
+checked), and a routine called by a hand-written routine that is itself
+being checked is not checked a second time. What depends on time (cycle
+count, raster timer, logged times) is taken from the original's run.
+**State: all 110 routines agree on every call of all nine sessions (8.7
+million calls), and the sessions match MAME exactly as far as the
+translation alone does.** Branches that no session takes are unchecked,
+though: the listing marks them "ran 0 times" (driving backwards through a
+gate, for one). A session that takes them is the way to check them.
+
+Checking all nine sessions takes about five minutes with the sessions run
+side by side (one `verify_session.py <session> --keep-recording
+--check-routines` each, in the background); never run the same session
+twice at once, they share their output files.
 
 Other switches: `--translated` leaves the hand-written routines out;
 `--only-routines=E8BA,EAA8` uses just those; `--profile` rewrites the
 block profile `routines.py` reads; `replay.gd --watch=OFFSET` reports every
 change of a work RAM word with the block and raster line.
 
-What is known so far is in the code: `Project/game/car.gd` names the car
-object's fields (the player's car is at `$101508`, in A6) and the ROM
-tables it uses. Where to go next, in the car: `$EDF4` (scrolling the
-course under the camera), `$EEA6`/`$EEBC` (drawing the car, on the ground
-and in the air), `$F696` (sparks off a wall), then the caller `$D956` and
-the other eleven driving states (table at `$DA72`; `$DDA4` is close to
-`$DAAC`). `$15256` queues a sound; it waits for the interrupt handler when
-the queue is full, so it needs the handler's side decompiled with it. `$13E74` is the terrain lookup (a cache of four
-decoded 128x128 blocks; `$13EF4` decodes one). The sprite list builder
-around `$12036-$13330` takes most of the CPU time and is what a native
-renderer would replace.
+What is known so far is in the code, `Project/game/`:
 
-Two things to know:
+| File | What it is | Routines |
+|---|---|---|
+| `car.gd` | The player's car (object at `$101508`, in A6): one frame of it (`$D956`), normal driving (`$DAAC`), spinning (`$DBF0`, `$DDA4`), flying (`$DFC8`), drawing it, the camera, damage, dust, skid marks, sparks, backfire, and its sounds | 72 |
+| `engine_sound.gd` | Gears by speed and the notes they ask for | 7 |
+| `race.gd` | The order of a race's frame (`$B844`) | 2 |
+| `race_clock.gd` | Time left, time gained at checkpoints, times taken | 5 |
+| `course_objects.gd` | Scenery and effects on the course: 24 slots, kept for a window around the camera | 15 |
+| `sprite_object.gd` | The setters of the records things are drawn from | 5 |
+| `ground.gd` | The ground code under a point (`$13E74`), with the packed block format | 1 |
+| `sound_requests.gd` | Asking for a sound and sending it on from the interrupt | 2 |
+| `random.gd` | The random number step | 1 |
+
+Things learnt that the enhancements will need:
+
+- **How things get on screen.** Everything but the ground and the text
+  layer is a "sprite object": one of 64 records of `$16` bytes at `$101B20`
+  (`sprite_object.gd` names the fields: shown, depth, x, y, zoom, picture).
+  A picture is two words (columns, tiles per column) followed by a tile
+  word and an attribute word for each tile, column by column. Once a frame
+  `$1229E` gathers the shown ones (`$13330`), sorts them by depth into the
+  list at `$1020A4` (count at `$1020A2`; six bytes each: depth, address) and
+  writes hardware sprites from them until 128 are used, into one of two
+  sprite ranges that the vertical blank swaps (`$12188`). A native renderer
+  can draw from that list instead of from video RAM.
+- **The ground** is 32 hardware sprites of 32 tiles used as a scrolling
+  tile map (`$1348E` redraws all, `$13546` scrolls a column or row in as the
+  camera crosses 16 pixels, `$13646` sets positions in the vertical blank,
+  and the raster interrupt `$136BA` wraps it vertically). It is drawn from
+  `GROUND_CAMERA` and `GROUND_ZOOM` (`car.gd`), which is all the standalone
+  course viewer (`Project/main.tscn`) needs. This code is tied to the
+  hardware and is to be replaced by native drawing, not rewritten.
+- **A wider view needs a wider window for scenery**: `course_objects.gd`
+  keeps things only within 512 by 512 course pixels around the camera
+  (`WINDOW_LEFT`, `WINDOW_ABOVE`, `WINDOW_SPAN`), and there are only 24
+  slots and 64 sprite objects. The car's `is_on_screen` and the camera's
+  look-ahead (`aim_camera`) also assume 320 by 224.
+- **The shadow is faked translucency**: `draw_shadow` shows it every other
+  frame (`SHADOW_FLICKER`).
+- Rules found on the way: when the time runs out (`TIME_UP`) the race goes
+  on to the next gate; scraping walls wears the car down in four stages
+  that lower its top speed (`wear_down`); `leave_skid_marks` in one case
+  uses whatever register D7 happens to hold (kept as it is, marked in the
+  code).
+
+Where to go next, roughly in this order:
+
+1. What the race's frame (`race.gd`) calls that is still translated: the
+   other three cars at `$10126C` (`$C558`-`$D1EE`, some 20 routines run for
+   each every frame; a simpler copy of the player's car, object size
+   `$D8`), the HUD on the text layer (`$FE0A` time taken, `$FECC` time
+   left, `$100D2` speed, `$19F82` progress bar, `$FC9E` slow-ground sign;
+   all draw through `$10052`/`$10082`/`$11A34`), and `$14760`.
+2. The remaining kinds of scenery (`$16BF2` is the one a car knocks over,
+   `$16E62` moves across; their set-up stubs from `$16FEA` on all end in
+   `$16B04`) and the other driving states of the table at `$DA72` that no
+   session reaches.
+3. The states above the race (`$B064`, `$B2BE`, `$B648`: tables of
+   routines per game state), menus, attract mode, ending.
+4. The sprite builder and ground code are replaced by a native renderer
+   rather than decompiled (see above); that is the first enhancement and
+   can be started alongside.
+
+Three things to know:
 
 - **Without `--check-routines`, a run with hand-written routines drifts
   from MAME** where the original needs more than a frame for a frame's work
   (first in the menus, frame 2005 of `practice_steer`): the original drops
   a frame there and hand-written code, taking no time, does not. The game
-  plays the same; it just does not slow down. So `--shots`, which runs the
-  real game, is only pixel-exact with `--translated`.
-- While being checked, a routine runs to its end before an interrupt is
-  taken. That has made no difference so far, but it will once hand-written
-  routines cover most of a frame; by then the interrupt handlers need
-  decompiling too, and the comparison becomes work RAM at the end of each
-  frame against the recordings.
+  plays the same; it just does not slow down, which is wanted. So
+  `--shots`, which runs the real game, is only pixel-exact with
+  `--translated`.
+- **Registers passed on to translated code.** A hand-written routine that
+  calls a translated one sets the registers the original would have had at
+  that point, as far as anything can read them (`add` in
+  `course_objects.gd` is the example). A set-up routine of a kind of
+  scenery that no session meets could still read one that is not set.
+- A new script in `Project/game/` goes into `Decomp.GROUPS`. `routines.py`
+  finds hand-written routines by lines of the form `<tab><tab>0xADDR: name,`
+  in `routines()`.
 
 ## What works, and how it was verified
 

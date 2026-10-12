@@ -10,7 +10,10 @@ extends RefCounted
 ## `scratch()` names the registers a routine leaves different from the
 ## original because no caller reads them ("ccr" for the flags, "d0.high"
 ## for the upper half of D0 alone). A routine not yet decompiled is called
-## with `m.call_routine(address)`.
+## with `m.call_routine(address)`, after setting the registers it reads.
+##
+## Hand-written code takes no processor time and is never interrupted, so it
+## must not wait for an interrupt as the original does in places.
 ##
 ## Tools/verify_session.py --check-routines runs every call of every routine
 ## here twice, original and hand-written, and compares the outcomes.
