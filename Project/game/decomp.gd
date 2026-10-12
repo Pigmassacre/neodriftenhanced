@@ -43,3 +43,14 @@ static func install(machine: NeoGeoMachine, only: Array[int] = []) -> int:
 			machine.replace_routine(address, table[address])
 			count += 1
 	return count
+
+
+## Gives the game more room than the original's tables have (see
+## NeoGeoMachine.more_room). Call after `install`, before the game runs.
+static func make_room(machine: NeoGeoMachine) -> void:
+	machine.more_room = true
+	var made: Array = machine.get_meta(&"hand_written")
+	for group: GameRoutines in made:
+		var hooks := group.room_hooks()
+		for address: int in hooks:
+			machine.hook_block(address, hooks[address])

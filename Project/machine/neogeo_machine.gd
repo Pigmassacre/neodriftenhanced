@@ -124,6 +124,11 @@ var irq2_pending := false
 ## (see NeoGeoVideo.view_width). The hand-written game routines that test
 ## whether something is in sight allow for it; 0 is the original.
 var view_margin := 0
+## True gives the game more room than the original's tables have, which a
+## wide picture needs: more things on the course at a time
+## (game/course_objects.gd) and more things drawn (game/sprite_object.gd).
+## Only the hand-written game looks at it.
+var more_room := false
 
 var input_p1 := 0
 var input_p2 := 0

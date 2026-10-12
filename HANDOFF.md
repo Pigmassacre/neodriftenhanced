@@ -272,37 +272,63 @@ Two ways of running it:
 
 The wide view: `NeoGeoVideo.view_width` (the window's width in game pixels,
 at most `WIDEST_VIEW` in `game.gd`). The hardware's 320 pixels are the
-middle of it, so everything the game places is where it was. Only a race
-(while the ground is drawn) uses the extra width; other screens get black
-bars, because they park things just off the hardware's screen. Outside a
-race, object positions are also wrapped to nine bits as the hardware does,
-which the menus' backgrounds rely on. The machine's `view_margin` tells the
-hand-written game code how much wider the picture is: the scenery window
-(`course_objects.gd`), the other cars' `ON_SCREEN` and the car's
-`is_on_screen` allow for it. With 0 they are the original, which is what
-the routine check runs.
+middle of it, so everything the game places is where it was. What is drawn
+beyond them:
+
+- **A race** (`GameScene.in_race`: the ground is on and there are HUD
+  objects, which have depths from `$7000`) is drawn in full. The machine's
+  `view_margin` tells the hand-written game code how much wider the picture
+  is: the scenery window (`course_objects.gd`), the other cars' `ON_SCREEN`
+  and the car's `is_on_screen` allow for it. With 0 they are the original,
+  which is what the routine check runs.
+- **Other screens** keep their objects to the middle 320 pixels (they park
+  things just off the hardware's screen, and rely on positions coming
+  round in nine bits), but their backdrop is repeated to both sides. A
+  backdrop is one of two things. Either the objects drawn first, when they
+  are a row of pictures as high as the screen that lie side by side across
+  it (`GameScene._find_backdrop`; the menus' scrolling "Drift Out", the
+  stage introductions). Or the ground, where what shows of it repeats
+  itself tile for tile at least twice (`NeoGeoVideo._ground_period`; the
+  rankings and totals). A picture that does not repeat (the title, the
+  ending) has the colour behind everything at its sides.
+- **The text layer** stays in the middle (`fix.gdshader`). The game fills
+  its first and last column (two on some screens) with a black tile to
+  hide the ground's ragged edges; those columns are left out. It also
+  blacks the screen out with black tiles for the wipes between screens;
+  where the next column in holds a tile of one colour, that colour is
+  carried on to the picture's edge, so a wipe covers the sides too (row by
+  row, not along the wipe's diagonal).
+- **The HUD** of a race goes to the picture's edges: the text layer is
+  drawn in three parts (columns up to 14 in the upper half and up to 12 in
+  the lower go left, columns from 26 go right; a row with text across such
+  a boundary is left whole), and HUD objects from x 256 on (the checkpoint
+  bar) go right. This is knowledge of this HUD's layout, to be replaced by
+  the reworked HUD of `TODO.md`.
+
+More room (`NeoGeoMachine.more_room`, set by `Decomp.make_room`, which the
+game calls unless run with `--translated`): the original has 24 slots for
+things on the course and 64 object records, and a picture twice as wide
+ran out of slots. With more room there are 40 more slots at `$108000` and
+64 more records at `$109000`, in work RAM the original never touches
+(`$103AF8`-`$10F1BD` stays zero through every recorded session). The
+tables are not moved: the hand-written routines that walk them
+(`course_objects.gd`, `sprite_object.gd`'s `take_free_record`) carry on
+into the extra ones, and `room_hooks` add them where translated code sets
+the originals up or clears them (`$14102`, `$1413C`, `$1217A`). A game
+started from a snapshot in mid-course has no extra slots until the next
+course. At 640 wide Stage 1 uses at most 29 slots.
 
 Left to do:
 
-- **The 24 scenery slots run out more often in a wide view** (in 150 of
-  5000 frames of Stage 4 at 640 wide, against 6 at 320), and what does not
-  get a slot is missing until it scrolls in again. Stage 1 also shows 63
-  of the 64 object records in use. Both tables are fixed places in work
-  RAM (`$102C0C`, `$101B20`) that translated code refers to; moving them
-  needs the routines that do (the scenery kinds' set-up from `$16FEA`,
-  `$12202`, `$120E0`) hand-written first.
-- The HUD is the text layer in the middle 320 pixels. The first and last
-  text columns, which the game fills with black to hide the ground's
-  edges, are left out in a wide view (`open_sides` in `fix.gdshader`).
-- A change of the window's width in mid-race does not search the newly
-  shown strips of course for scenery; it turns up as the camera moves.
 - The camera still frames the car for 320 pixels (`aim_camera`).
-- Never looked at in a wide view: the other cars (no session has them on
-  screen), anything in a race that is placed in hardware coordinates and
-  relied on being off screen. Stage 1 was looked at; the other stages not.
+- Screens whose backdrop is one picture 320 wide (the stage introductions)
+  repeat it with a visible seam.
+- Never looked at in a wide view: two players, continuing, name entry
+  after a ranked game, and the other cars in a game (the attract demos'
+  were).
 - With the builder gone, `show_course`'s test for a camera jump and the
   two sets of ground positions are dead weight, and the picture could be
-  built from the car and scenery directly instead of through the 64
+  built from the car and scenery directly instead of through the object
   records.
 
 ## What works, and how it was verified
@@ -474,8 +500,8 @@ python3 verify_session.py practice_steer --translated --compare-views   # the sc
       range of the program listing. MAME's linear listing is misaligned in
       places — the recompiler's own decoder (`Tools/recomp/m68k.py`) is the
       authority.
-14. Of the enhancements of `TODO.md`, the wide view is begun ("Drawing"
-    above). The others are not: minimap, real translucency (the shadows
+14. Of the enhancements of `TODO.md`, the wide view is in, menus
+    included ("Drawing" above). The others are not: minimap, real translucency (the shadows
     are objects shown every other frame, so a scene can draw them at half
     strength instead), reworked menus and HUD, a CRT shader.
 15. Generated code load time is about 5 s (6 MB of GDScript). Fine for now.

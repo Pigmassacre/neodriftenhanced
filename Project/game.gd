@@ -122,6 +122,8 @@ func _ready() -> void:
 		video.scene = GameScene.new(machine)
 		if not _comparing and not keep_video_ram:
 			video.scene.replace_hardware_drawing()
+			if hand_written:
+				Decomp.make_room(machine)
 	if _comparing:
 		_set_up_comparison()
 	else:

@@ -9,10 +9,7 @@ extends RefCounted
 ## limits the picture to the hardware's 320 pixels and to 128 columns of
 ## objects. NeoGeoVideo draws from this instead, at any width.
 
-## The records of the things to draw: 64 of $16 bytes.
-const OBJECTS := 0x1B20
-const OBJECT_COUNT := 64
-const OBJECT_SIZE := 0x16
+const SpriteObject := preload("res://game/sprite_object.gd")
 ## A record's fields (as in game/sprite_object.gd), and one more: a palette
 ## to use for every tile instead of the picture's own, when not 0.
 const SHOWN := 0x00
@@ -25,6 +22,10 @@ const COLUMNS := 0x0C
 const ROWS := 0x0E
 const PICTURE_BODY := 0x10
 const PALETTE := 0x14
+## A backdrop's pictures are this many tiles high, and the hardware's
+## picture is this wide.
+const BACKDROP_ROWS := 16
+const SCREEN_WIDTH := 320
 ## The hardware has 128 sprites for objects, one for each column.
 const HARDWARE_COLUMNS := 128
 ## By sixteenths of the zoom across, for each column of an object how much
@@ -76,8 +77,15 @@ const SYSTEM_MODE := 0xFD80
 const STRIP_TILES := 32
 const STRIP_BYTES := STRIP_TILES * 4
 ## Numbers kept for each strip in `strips`: x, top line, rows, the hardware's
-## shrink across (0-15) and down (0-255).
-const STRIP_FIELDS := 5
+## shrink across (0-15) and down (0-255), and 1 if it belongs at the right
+## edge of the picture however wide that is (0 where it is).
+const STRIP_FIELDS := 6
+## In a race, things drawn from this depth on are the HUD's, not the
+## course's. Those from HUD_RIGHT_START on to the right (the bar that shows
+## how far the next checkpoint is) belong at the right edge of a wider
+## picture, with the time left.
+const HUD_DEPTH := 0x7000
+const HUD_RIGHT_START := 256
 
 var machine: NeoGeoMachine
 ## With this the picture changes when the hardware's would: at the vertical
@@ -92,6 +100,16 @@ var hardware_limits := false
 ## flips and palette), STRIP_TILES tiles a strip.
 var strips := PackedInt32Array()
 var strip_tiles := PackedByteArray()
+## Screens without ground have a backdrop instead: a row of pictures the
+## height of the screen, side by side from its left edge to its right or
+## beyond, drawn before anything else. Then this is how many of the strips
+## are the backdrop's (the first ones), and how many pixels across the row
+## is: repeated that far apart, it fills a picture of any width.
+var backdrop_strips := 0
+var backdrop_period := 0
+## True if the strips were made in a race: the ground is drawn (as it is on
+## some other screens too) and there are things of the HUD.
+var in_race := false
 ## True while the ground is drawn, and from where.
 var ground_on := false
 var camera := Vector2i.ZERO
@@ -103,6 +121,8 @@ var block_count := 0
 var blocks := 0
 
 var _pending_strips := PackedInt32Array()
+var _pending_backdrop := Vector2i.ZERO
+var _pending_in_race := false
 var _pending_tiles := PackedByteArray()
 var _pending_ground: Array = []
 var _blank := PackedByteArray()
@@ -174,11 +194,16 @@ func _build_sprites() -> void:
 func _take_sprites() -> void:
 	strips = _pending_strips
 	strip_tiles = _pending_tiles
+	in_race = _pending_in_race
+	backdrop_strips = _pending_backdrop.x
+	backdrop_period = _pending_backdrop.y
 
 
 func _clear_sprites() -> void:
 	_pending_strips = PackedInt32Array()
 	_pending_tiles = PackedByteArray()
+	_pending_backdrop = Vector2i.ZERO
+	_pending_in_race = false
 	_take_sprites()
 
 
@@ -268,8 +293,8 @@ func _shown_in_order() -> PackedInt32Array:
 	var ram := machine.ram
 	var records := PackedInt32Array()
 	var depths := PackedInt32Array()
-	for index in OBJECT_COUNT:
-		var record := OBJECTS + index * OBJECT_SIZE
+	for index in SpriteObject.record_count(machine):
+		var record := SpriteObject.record(index) & 0xFFFF
 		if ram.decode_u16(record + SHOWN) == 1:
 			records.append(record)
 			depths.append(ram.decode_s16(record + DEPTH))
@@ -290,6 +315,42 @@ func _shown_in_order() -> PackedInt32Array:
 	return records
 
 
+## How many of `records`, from the first, make up a backdrop, and how many
+## pixels across it is; zeros when there is none. They are the ones drawn
+## first that are as high as the screen, at its top and not zoomed, if they
+## lie side by side from the screen's left edge to its right or beyond. The
+## hardware counts across in nine bits, and such a row comes round: what
+## starts right of the screen is the row's left end.
+func _find_backdrop(records: PackedInt32Array) -> Vector2i:
+	var ram := machine.ram
+	if ram.decode_u16(GROUND_ON) != 0 or records.is_empty():
+		return Vector2i.ZERO
+	var depth := ram.decode_s16(records[0] + DEPTH)
+	var spans: Array[Vector2i] = []
+	for record in records:
+		if ram.decode_s16(record + DEPTH) != depth or ram.decode_u16(record + ROWS) != BACKDROP_ROWS \
+				or (ram.decode_u16(record + Y) & 0x1FF) != 0 \
+				or ram.decode_u16(record + ZOOM_X) != 0x100 or ram.decode_u16(record + ZOOM_Y) != 0x100:
+			break
+		var left := _backdrop_left(record)
+		spans.append(Vector2i(left, left + ram.decode_u16(record + COLUMNS) * 16))
+	if spans.is_empty():
+		return Vector2i.ZERO
+	var count := spans.size()
+	spans.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.x < b.x)
+	for index in range(1, count):
+		if spans[index].x != spans[index - 1].y:
+			return Vector2i.ZERO
+	if spans[0].x > 0 or spans[-1].y < SCREEN_WIDTH:
+		return Vector2i.ZERO
+	return Vector2i(count, spans[-1].y - spans[0].x)
+
+
+func _backdrop_left(record: int) -> int:
+	var left := machine.ram.decode_u16(record + X) & 0x1FF
+	return left - 0x200 if left >= SCREEN_WIDTH else left
+
+
 ## Makes the strips of everything shown, as $1229E makes hardware sprites.
 func _gather() -> void:
 	var ram := machine.ram
@@ -297,7 +358,16 @@ func _gather() -> void:
 	var made := PackedInt32Array()
 	var tiles := PackedByteArray()
 	var columns_left := HARDWARE_COLUMNS
-	for record in _shown_in_order():
+	var records := _shown_in_order()
+	var backdrop := _find_backdrop(records)
+	var backdrop_records := backdrop.x
+	var race := false
+	if ram.decode_u16(GROUND_ON) != 0:
+		for record in records:
+			race = race or ram.decode_s16(record + DEPTH) >= HUD_DEPTH
+	backdrop.x = 0
+	for index in records.size():
+		var record := records[index]
 		var columns := ram.decode_u16(record + COLUMNS)
 		if hardware_limits:
 			if columns > columns_left:
@@ -305,6 +375,8 @@ func _gather() -> void:
 			columns_left -= columns
 		var rows := mini(ram.decode_u16(record + ROWS), STRIP_TILES)
 		var x := ram.decode_s16(record + X)
+		if index < backdrop_records:
+			x = _backdrop_left(record)
 		# the hardware counts lines in nine bits; 240 on are above the picture
 		var top := ram.decode_u16(record + Y) & 0x1FF
 		if top >= 240:
@@ -312,6 +384,10 @@ func _gather() -> void:
 		var zoom_x := ram.decode_u16(record + ZOOM_X)
 		var zoom_y := ram.decode_u16(record + ZOOM_Y)
 		var palette := ram.decode_u16(record + PALETTE)
+		var side := 0
+		if race and ram.decode_s16(record + DEPTH) >= HUD_DEPTH:
+			if x >= HUD_RIGHT_START:
+				side = 1
 		var body := _long(record + PICTURE_BODY) & 0xFFFFFF
 		var source := rom
 		if body >= 0x100000 and body < 0x200000:
@@ -343,6 +419,7 @@ func _gather() -> void:
 			made.append(rows)
 			made.append(shrink_x)
 			made.append(shrink_y)
+			made.append(side)
 			x += shrink_x + 1
 			var from := body + column * column_bytes
 			var at := tiles.size()
@@ -351,5 +428,9 @@ func _gather() -> void:
 				for row in rows:
 					tiles[at + row * 4 + 3] = palette & 0xFF
 			tiles.append_array(_blank.slice(column_bytes))
+		if index < backdrop_records:
+			backdrop.x = made.size() / STRIP_FIELDS
 	_pending_strips = made
 	_pending_tiles = tiles
+	_pending_backdrop = backdrop
+	_pending_in_race = race

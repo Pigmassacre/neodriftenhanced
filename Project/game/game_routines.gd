@@ -43,6 +43,13 @@ func variations() -> Dictionary:
 	return {}
 
 
+## Per address of a block of the original, a method to run before it when
+## the machine has `more_room`: where the original deals with one of its
+## tables, the method does the same for what there is more of.
+func room_hooks() -> Dictionary:
+	return {}
+
+
 # Work RAM by bus address ($100000-$10FFFF), big-endian as the game sees it.
 
 func u8(address: int) -> int:

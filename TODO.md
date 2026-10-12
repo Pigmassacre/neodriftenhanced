@@ -8,9 +8,20 @@
 
 - Widescreen/ultrawide support
 - Widescreen/ultrawide support in menus as well (the background should keep repeating)
+- Actual translucency instead of faked (render every other frame) translucency
 - Minimap
-- Actual translucency instead of faked translucency
 - Reworked menus
+  - New main menu
+    - Arcade mode
+    - Freeplay mode (select any stage)
+  - Options menu
+    - Resolution
+    - Windowed mode
+    - Key remapping
+    - Audio sliders
+    - other options
+  - Quit to desktop
+- Gamepad support
 - Reworked HUD, toggleable
   - Not pixel art
 - CRT shader option

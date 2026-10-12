@@ -2,7 +2,8 @@ extends GameRoutines
 ## Things on the course: scenery beside the road, and short-lived effects
 ## such as sparks and smoke.
 ##
-## There is room for 24 at a time. A course has far more scenery than that,
+## There is room for 24 at a time (and for more with the machine's
+## `more_room`). A course has far more scenery than that,
 ## so only what lies in a window around the camera exists: as the camera
 ## moves, the strip of course that comes into the window is searched for
 ## scenery, and what falls out of the window is removed. Effects are added
@@ -18,6 +19,14 @@ const Sprite := preload("res://game/sprite_object.gd")
 const SLOTS := 0x102C0C
 const SLOT_COUNT := 24
 const SLOT_SIZE := 0x40
+## More slots, in work RAM the original never uses, for when the machine
+## has `more_room`: a wider picture shows more of the course.
+const MORE_SLOTS := 0x108000
+const MORE_SLOT_COUNT := 40
+## Where the original, setting a course up, has set up its 24 slots
+## ($14072), and where it has cleared them away again ($1410E).
+const SLOTS_SET_UP := 0x14102
+const SLOTS_CLEARED := 0x1413C
 ## Routine run for it every frame (0 when the slot is free), and the one
 ## run when it is removed.
 const UPDATE := 0x00
@@ -91,6 +100,10 @@ const EFFECT_PICTURES := 0x80004
 const SCENERY_PICTURES := 0x8000C
 
 
+## What `_wider` was a frame ago; -1 before the first.
+var _wider_before := -1
+
+
 func routines() -> Dictionary:
 	return {
 		0x14160: update_all,
@@ -133,13 +146,53 @@ func scratch() -> Dictionary:
 	}
 
 
+func room_hooks() -> Dictionary:
+	return {SLOTS_SET_UP: _set_up_more_slots, SLOTS_CLEARED: _clear_more_slots}
+
+
+func _slot_count() -> int:
+	return SLOT_COUNT + (MORE_SLOT_COUNT if m.more_room else 0)
+
+
+func _slot(index: int) -> int:
+	if index < SLOT_COUNT:
+		return SLOTS + index * SLOT_SIZE
+	return MORE_SLOTS + (index - SLOT_COUNT) * SLOT_SIZE
+
+
+## Each slot keeps a sprite object for as long as the course lasts. One
+## without (the game was started in mid-course) is never used.
+func _set_up_more_slots() -> void:
+	for index in range(SLOT_COUNT, _slot_count()):
+		var slot := _slot(index)
+		var sprite := Sprite.take_record(m)
+		set32(slot + UPDATE, 0)
+		set32(slot + SPRITE, sprite)
+		if sprite != 0:
+			Sprite.show(m, sprite, false)
+
+
+func _clear_more_slots() -> void:
+	for index in range(SLOT_COUNT, _slot_count()):
+		var slot := _slot(index)
+		var sprite := u32(slot + SPRITE)
+		if sprite == 0:
+			continue
+		if u32(slot + UPDATE) != 0:
+			m.a1 = slot
+			remove()
+		Sprite.free_record(m, sprite)
+		set32(slot + SPRITE, 0)
+
+
 ## $14160: one frame of everything on the course. Changes no register.
 func update_all() -> void:
 	var saved := [m.d0, m.d1, m.d2, m.d3, m.d4, m.d5, m.d6, m.d7,
 			m.a0, m.a1, m.a2, m.a3, m.a4, m.a5, m.a6, m.fn, m.fz, m.fv, m.fc, m.fx]
 	keep_window()
-	for index in SLOT_COUNT:
-		var slot := SLOTS + index * SLOT_SIZE
+	var count := _slot_count()
+	for index in count:
+		var slot := _slot(index)
 		var routine := u32(slot + UPDATE)
 		if routine != 0:
 			m.a0 = routine
@@ -147,7 +200,7 @@ func update_all() -> void:
 			m.a4 = CAMERA
 			m.d0 = routine
 			m.d4 = with_low16(m.d4, SLOT_SIZE)
-			m.d5 = SLOT_COUNT - 1 - index
+			m.d5 = count - 1 - index
 			m.call_routine(routine)
 	set32(CAMERA_BEFORE, u32(CAMERA))
 	set32(CAMERA_BEFORE + ZOOM_X, u32(CAMERA + ZOOM_X))
@@ -176,13 +229,14 @@ func place() -> void:
 
 
 ## $141FA: adds a thing at D0, D2 on the course. A2 is the address of its
-## three routines. Leaves it in A1, or 0 there when all 24 slots are taken.
+## three routines. Leaves it in A1, or 0 there when every slot is taken.
 func add() -> void:
 	var kind := m.a2
 	m.d3 = with_low16(m.d3, SLOT_SIZE)
-	for index in SLOT_COUNT:
-		var slot := SLOTS + index * SLOT_SIZE
-		if u32(slot + UPDATE) != 0:
+	var count := _slot_count()
+	for index in count:
+		var slot := _slot(index)
+		if u32(slot + UPDATE) != 0 or (index >= SLOT_COUNT and u32(slot + SPRITE) == 0):
 			continue
 		set32(slot + UPDATE, m.r32(kind + 8))
 		set32(slot + REMOVE, m.r32(kind + 4))
@@ -191,7 +245,7 @@ func add() -> void:
 		Sprite.show(m, u32(slot + SPRITE), true)
 		m.a1 = slot
 		m.d0 = 1
-		m.d1 = with_low16(m.d1, SLOT_COUNT - 1 - index)
+		m.d1 = with_low16(m.d1, count - 1 - index)
 		m.a0 = m.r32(kind)
 		m.call_routine(m.a0)
 		return
@@ -214,6 +268,7 @@ func remove() -> void:
 ## $14256: moves the window with the camera: removes what is now outside
 ## it and searches the strips that came into it.
 func keep_window() -> void:
+	_show_more_of_course()
 	_set_window(WINDOW, CAMERA)
 	_set_window(WINDOW_BEFORE, CAMERA_BEFORE)
 	var left := s16(WINDOW)
@@ -226,9 +281,10 @@ func keep_window() -> void:
 	m.d7 = with_low16(m.d7, bottom)
 	m.a4 = SLOT_SIZE
 	m.a5 = SLOTS_TO_GO
-	for index in SLOT_COUNT:
-		var slot := SLOTS + index * SLOT_SIZE
-		set16(SLOTS_TO_GO, SLOT_COUNT - index)
+	var count := _slot_count()
+	for index in count:
+		var slot := _slot(index)
+		set16(SLOTS_TO_GO, count - index)
 		if u32(slot + UPDATE) != 0:
 			var x := s16(slot + X)
 			var y := s16(slot + Y)
@@ -261,9 +317,35 @@ func keep_window() -> void:
 		search_by_row()
 
 
+## How much further the window reaches to each side for a picture wider
+## than the original's.
+func _wider() -> int:
+	return (m.view_margin << 8) / FURTHEST_ZOOM
+
+
+## When the picture has become wider since the last frame, searches the
+## two strips of course that the window has grown by.
+func _show_more_of_course() -> void:
+	var wider := _wider()
+	var grown := wider - _wider_before
+	var first := _wider_before < 0
+	_wider_before = wider
+	if first or grown <= 0:
+		return
+	_set_window(WINDOW_BEFORE, CAMERA_BEFORE)
+	var left := s16(WINDOW_BEFORE)
+	var right := s16(WINDOW_BEFORE + 4)
+	for strip_left: int in [left, right - grown + 1]:
+		set16(STRIP, strip_left)
+		set16(STRIP + 2, u16(WINDOW_BEFORE + 2))
+		set16(STRIP + 4, strip_left + grown - 1)
+		set16(STRIP + 6, u16(WINDOW_BEFORE + 6))
+		m.a6 = STRIP
+		search_by_column()
+
+
 func _set_window(window: int, camera: int) -> void:
-	# a wider picture than the original's needs a wider window
-	var wider := (m.view_margin << 8) / FURTHEST_ZOOM
+	var wider := _wider()
 	set16(window, u16(camera + CAMERA_X) - WINDOW_LEFT - wider)
 	set16(window + 2, u16(camera + CAMERA_Y) - WINDOW_ABOVE)
 	set16(window + 4, u16(window) + WINDOW_SPAN + wider * 2)
