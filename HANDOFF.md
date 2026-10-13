@@ -61,10 +61,18 @@ translated program takes five.
   (the routines still call each other by address in many places, with the
   registers the original would have had). An address nothing is written
   for is reported once (`no routine at $...`) and skipped.
-- The machine still starts from `data/game/start.snapshot`, for what the
-  system had left in memory when the game was first given the screen: the
-  board's settings, the lists of best times, the palettes. The registers
-  and the program counter in it are not used.
+- The machine starts as a board just switched on (`Decomp.power_on`), not
+  from a snapshot: `system.gd`'s `power_on` sets what the system leaves
+  the game (an arcade board for Europe, the game's settings as its own
+  table at `$11E` has them at first, a coin a credit), and
+  `best_times.gd`'s `first_run` the lists of best times as the program has
+  them. Started so and started from `data/game/start.snapshot`, the
+  game's memory is the same on every one of 30000 frames played.
+- The best times are kept as an arcade board keeps them: the game's header
+  names `$100000`-`$100373` as what the board is to keep on its battery.
+  `game.gd` writes that (`Decomp.kept_times`) to `user://best_times.bin`
+  when it changes, on every restart of the machine and on quitting, and
+  hands it to `power_on`. Not in an automated run, nor from a snapshot.
 - Hand-written code takes no time, so there is no clock: the random
   numbers are stepped a number of times a frame that depends on the stick
   (`main_loop.gd`, `frame`), where the original steps them for as long as
@@ -87,9 +95,8 @@ coin to game over and back to the attract mode, a race driven.
 What was left out as never reached on an arcade board without a card
 slot: the states of a home console (14-17: `$7E1C`, `$7E86`, `$72BC`,
 `$7314`), the screens of a memory card (5 and 11: `$1A118`, `$1A1CA`), the
-start of a game on a board for America (`$806`) and on a console (`$88A`),
-and the first set-up of the best times (`$10D0`-`$1278`, done before the
-snapshot).
+and the start of a game on a board for America (`$806`) and on a console
+(`$88A`).
 
 ## Decompilation
 
@@ -456,8 +463,8 @@ the picture at the window's resolution; `settings.gd` holds the options and
 keeps them in `user://settings.cfg`. `game.gd` does what a choice means:
 
 - **The main menu is over the original's attract mode**, the machine
-  running with no inputs. Choosing a game restarts the machine from the
-  start snapshot and works its inputs behind a black screen
+  running with no inputs. Choosing a game restarts the machine and works
+  its inputs behind a black screen
   (`_starting_inputs`): a coin, start at the title, and for a single stage
   A through "how to play" and the name entry as well. It goes by the main
   loop's state at `$100426` (0, 1 attract; 12, 13 title with a credit; 2, 3
@@ -468,7 +475,8 @@ keeps them in `user://settings.cfg`. `game.gd` does what a choice means:
   continued or is over.
 - **Back to the menu** always restarts the machine (a credit left in would
   start a game by itself at the title), and sends the sound driver its
-  reset command (3). So best times do not outlast a game.
+  reset command (3). The best times are kept over it (see "The game
+  without the translated program").
 - **Free continues**: a coin is put in when the continue screen appears.
 - **Pause** is the machine not being stepped. A button that is both pause
   and start (Start on a gamepad) pauses only while driving.
@@ -617,7 +625,8 @@ python3 verify_session.py practice_steer --translated --compare-views   # the sc
      (`MachineLoader.E_CLOCK_PHASE`);
    - the wait loop's `rol`, which is too late to notice an interrupt in its
      last 6 cycles.
-10. **Cold boot**: the game starts from a MAME snapshot
+10. **Cold boot** (with the translated program only; the hand-written game
+    starts by itself): the game starts from a MAME snapshot
     (`Tools/make_start_snapshot.py`) because the BIOS power-on tests (clock
     chip, backup RAM, sound CPU handshake) are not modelled. So setup needs
     MAME. Modelling those, or building the post-boot state directly, would

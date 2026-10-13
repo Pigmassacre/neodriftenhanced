@@ -72,9 +72,10 @@ hardware would. The rest are listed at the top of `Project/game.gd`.
 - `Project/sound/` runs the game's own Z80 sound driver and synthesises what
   it plays on the sound chip (FM, square waves and noise, sampled sound).
   The chip's seventh sampled channel (ADPCM-B) makes no sound yet.
-- The game starts from a machine snapshot taken in MAME just after boot
-  (`Tools/make_start_snapshot.py`), for the memory the board's system leaves
-  the game: its settings, the best times, the colours.
+- The game starts as an arcade board just switched on, and keeps its best
+  times in the user folder as the board keeps them on its battery. Only
+  the translated program starts from a machine snapshot taken in MAME just
+  after boot (`Tools/make_start_snapshot.py`).
 
 If the translated program reaches code the translator has not seen, it stops,
 logs the address to `data/game/seeds.txt`, and `Tools/recomp/build_code.py`

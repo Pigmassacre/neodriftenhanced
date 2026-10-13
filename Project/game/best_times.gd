@@ -7,6 +7,13 @@ extends GameRoutines
 ## entry starts with its time (a long word, less is better).
 
 const Text := preload("res://game/text.gd")
+const Car := preload("res://game/car.gd")
+
+## What the board keeps of the game's memory while it is off: the lists,
+## and two words of the sound's that are not worth keeping.
+const KEPT := 0x100000
+const KEPT_SIZE := 0x370
+const KEPT_END := 0x100374
 
 ## The list of whole games: eleven entries of a time, a name of three
 ## letters, the grade the time is worth and the car driven.
@@ -19,6 +26,18 @@ const ENTRY_CAR := 10
 const COURSES := 0x1000B2
 const COURSE_ENTRIES := 6
 const COURSE_ENTRY_SIZE := 12
+const COURSE_COUNT := 7
+## Where the lists' entries are, and the size of an entry of either list.
+const GAME_ENTRY_STORE := 0x10002E
+const ENTRY_SIZE := 12
+const COURSE_TABLES := 0x1000CE
+const COURSE_ENTRY_STORE := 0x100176
+const COURSE_ENTRY_GRADE := 10
+## By the part of the world the board is for: the entries the list of
+## whole games starts out with, and for each course those of its list.
+const COUNTRY := 0x10FD83
+const FIRST_GAMES := 0x1E97E
+const FIRST_COURSES := 0x1EA0E
 ## The game being played: the car chosen, the name entered, the course,
 ## where the game came in the list of games and the course in its list,
 ## the entry the course leaves, and what kind of machine the car is.
@@ -58,6 +77,75 @@ func scratch() -> Dictionary:
 		0x113A: ["ccr"], 0x117C: ["a0", "a1", "ccr"], 0x11A8: ["ccr"], 0x11CE: ["d0", "a0", "a1", "ccr"],
 		0x12AC: ["ccr"], 0x12FA: ["ccr"], 0x7A6C: ["ccr"], 0x7AC4: ["ccr"], 0x7D54: ["ccr"], 0x7D98: ["ccr"],
 	}
+
+
+## What the game does the first time the board is switched on with it
+## ($706): the lists as the program has them, every time graded.
+func first_run() -> void:
+	for address in range(KEPT, KEPT_END):
+		m.w8(address, 0)
+	var country := u8(COUNTRY)
+	for index in GAME_ENTRIES:
+		m.w32(GAMES + index * 4, GAME_ENTRY_STORE + index * ENTRY_SIZE)
+	var games := rom_u32(FIRST_GAMES + country * 4)
+	for offset in range(0, GAME_ENTRIES * ENTRY_SIZE, 2):
+		m.w16(GAME_ENTRY_STORE + offset, m.r16(games + offset))
+	var entry := COURSE_ENTRY_STORE
+	for course in COURSE_COUNT:
+		var table := COURSE_TABLES + course * COURSE_ENTRIES * 4
+		m.w32(COURSES + course * 4, table)
+		var first := rom_u32(rom_u32(FIRST_COURSES + country * 4) + course * 4)
+		for index in COURSE_ENTRIES:
+			m.w32(table + index * 4, entry)
+			for offset in range(0, ENTRY_SIZE, 2):
+				m.w16(entry + offset, m.r16(first + index * ENTRY_SIZE + offset))
+			entry += ENTRY_SIZE
+	sibling(Car).machine_into_register()
+	var machine := low16(m.d0)
+	for index in GAME_ENTRIES - 1:
+		var game := m.r32(GAMES + index * 4)
+		m.w16(game + ENTRY_GRADE, _grade(rom_u32(GAME_GRADES + machine * 4), 5, m.r32(game)))
+	for course in COURSE_COUNT:
+		var grades := rom_u32(rom_u32(COURSE_GRADES + machine * 4) + course * 4)
+		for index in COURSE_ENTRIES - 1:
+			var time := m.r32(m.r32(COURSES + course * 4) + index * 4)
+			m.w16(time + COURSE_ENTRY_GRADE, _grade(grades, 4, m.r32(time)))
+
+
+## The lists as bytes, to keep while the game is not running.
+func kept() -> PackedByteArray:
+	var bytes := PackedByteArray()
+	bytes.resize(KEPT_SIZE)
+	for index in KEPT_SIZE:
+		bytes[index] = m.r8(KEPT + index)
+	return bytes
+
+
+## Puts back what `kept` gave. False, and nothing done, when `bytes` are
+## not lists of this game's.
+func restore(bytes: PackedByteArray) -> bool:
+	if bytes.size() != KEPT_SIZE:
+		return false
+	# every entry of every table has to be where an entry can be
+	for index in GAME_ENTRIES:
+		var entry := bytes.decode_u32(GAMES - KEPT + index * 4)
+		if _swapped(entry) < GAME_ENTRY_STORE or _swapped(entry) > COURSE_TABLES - ENTRY_SIZE:
+			return false
+	for course in COURSE_COUNT:
+		if _swapped(bytes.decode_u32(COURSES - KEPT + course * 4)) != COURSE_TABLES + course * COURSE_ENTRIES * 4:
+			return false
+	for index in COURSE_COUNT * COURSE_ENTRIES:
+		var entry := _swapped(bytes.decode_u32(COURSE_TABLES - KEPT + index * 4))
+		if entry < COURSE_ENTRY_STORE or entry > KEPT + KEPT_SIZE - ENTRY_SIZE:
+			return false
+	for address in range(KEPT, KEPT_END):
+		m.w8(address, bytes[address - KEPT] if address - KEPT < KEPT_SIZE else 0)
+	return true
+
+
+## A long word read with its bytes the wrong way round, put right.
+static func _swapped(value: int) -> int:
+	return ((value & 0xFF) << 24) | ((value & 0xFF00) << 8) | ((value >> 8) & 0xFF00) | (value >> 24)
 
 
 ## $113A: puts the `count` addresses at `table` in order of the times they

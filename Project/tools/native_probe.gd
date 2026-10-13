@@ -27,7 +27,7 @@ func _init() -> void:
 		elif arg == "--idle":
 			idle = true
 	var machine := MachineLoader.create(true, false)
-	MachineLoader.load_snapshot(machine, MachineLoader.repo_dir().path_join("data/game/start.snapshot"))
+	Decomp.power_on(machine)
 	var scene := GameScene.new(machine)
 	scene.replace_hardware_drawing()
 	var last := ""

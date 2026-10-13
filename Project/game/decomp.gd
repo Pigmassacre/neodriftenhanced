@@ -52,6 +52,8 @@ const NATIVE_GROUPS: Array[GDScript] = [
 	preload("res://game/native_drawing.gd"),
 ]
 const TopOfGame := preload("res://game/main_loop.gd")
+const Board := preload("res://game/system.gd")
+const BestTimes := preload("res://game/best_times.gd")
 
 
 ## All groups, for `machine`, which keeps them alive from then on.
@@ -90,6 +92,28 @@ static func install_native(machine: NeoGeoMachine) -> void:
 			machine.replace_routine(address, table[address])
 		if group.get_script() == TopOfGame:
 			machine.native = group.frame
+
+
+## Sets a machine made by `install_native` up as a board just switched on:
+## the system's settings, and the best times in `kept` (see `kept_times`)
+## or, without them, the ones the game starts out with.
+static func power_on(machine: NeoGeoMachine, kept := PackedByteArray()) -> void:
+	_group(machine, Board).power_on()
+	var times: BestTimes = _group(machine, BestTimes)
+	if not times.restore(kept):
+		times.first_run()
+
+
+## What the board keeps of the game while it is off, for `power_on`.
+static func kept_times(machine: NeoGeoMachine) -> PackedByteArray:
+	return _group(machine, BestTimes).kept()
+
+
+static func _group(machine: NeoGeoMachine, script: GDScript) -> GameRoutines:
+	for group: GameRoutines in machine.get_meta(&"hand_written"):
+		if group.get_script() == script:
+			return group
+	return null
 
 
 ## Gives the game more room than the original's tables have (see

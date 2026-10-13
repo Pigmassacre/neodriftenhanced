@@ -78,6 +78,26 @@ const SPRITE_TILES := 0
 const SPRITE_ZOOMS := 0x8000
 const SPRITE_COUNT := 0x200
 
+## What the system tells the game of the board: bit 7 set for an arcade
+## board, and the part of the world it is for (2: Europe).
+const BOARD := 0x10FD82
+const ARCADE := 0x80
+const COUNTRY := 0x10FD83
+const EUROPE := 2
+## The game's settings as the board's keeper has set them: two times, two
+## counts and ten choices. The game's table of them, by country, has their
+## names first; a choice's byte there has what it is at first in its
+## upper half.
+const SETTINGS := 0x10FD84
+const SETTING_TABLES := 0x116
+const SETTING_NAME_SIZE := 0x10
+const TIMES_AND_COUNTS := 6
+const CHOICES := 10
+## In the memory the board keeps: by coin slot the coins a credit takes
+## and the credits they give, as the board has them when new.
+const COIN_SETTINGS := [1, 1, 1, 2]
+const SECONDS_AT_FIRST := 0x30
+
 ## Coins taken that the game has not yet sounded.
 var _coins_to_sound := 0
 ## What the coin slots showed one and two frames ago.
@@ -104,6 +124,27 @@ func routines() -> Dictionary:
 
 func scratch() -> Dictionary:
 	return {0xC00450: ["d0", "d1", "d2", "a0", "a5", "ccr"], 0xC004C2: ["ccr"], 0xC004C8: ["d0.high", "ccr"]}
+
+
+## Sets up what the game finds of the system's when the board is switched
+## on: a board for Europe with every setting as it is when new.
+func power_on() -> void:
+	set8(BOARD, ARCADE)
+	set8(COUNTRY, EUROPE)
+	var table := rom_u32(SETTING_TABLES + EUROPE * 4) + SETTING_NAME_SIZE
+	for index in TIMES_AND_COUNTS:
+		set8(SETTINGS + index, m.r8(table + index))
+	for index in CHOICES:
+		set8(SETTINGS + TIMES_AND_COUNTS + index, m.r8(table + TIMES_AND_COUNTS + index) >> 4)
+	for index in COIN_SETTINGS.size():
+		_store(COINS_NEEDED + index, COIN_SETTINGS[index])
+	_store(SECONDS_TO_START, SECONDS_AT_FIRST)
+	_store(SECONDS_TO_START + 1, FRAMES_PER_SECOND)
+	_set_credits(0)
+
+
+func _store(address: int, value: int) -> void:
+	m.sram[(address & 0xFFFF) ^ 1] = value
 
 
 func _credits() -> int:

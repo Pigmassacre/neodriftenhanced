@@ -33,7 +33,9 @@ extends Node2D
 ##                              count of drawn frames, to try the menus out
 ##   --shot-tick=N              with --shot, one screenshot of the window at that count
 ##                              of drawn frames, then quit
-##   --snapshot=PATH            machine state to start from (default data/game/start.snapshot)
+##   --snapshot=PATH            machine state to start from; the default is a board just
+##                              switched on, or with the translated program
+##                              data/game/start.snapshot
 ##   --input=FIELD:FIRST-LAST   scripted input for frames FIRST..LAST (as tools/replay.gd)
 ##   --topup=OFFSET:BELOW:VALUE keeps a work RAM word topped up (as tools/replay.gd)
 ##   --seedlog=PATH             random seeds from a MAME run (as tools/replay.gd), so
@@ -63,6 +65,8 @@ extends Node2D
 
 ## The hardware refreshes slightly slower than 60 Hz.
 const FRAME_TIME := 1.0 / 59.185606
+## Where the best times are kept from one run to the next.
+const BEST_TIMES := "user://best_times.bin"
 ## The widest picture drawn: what the game keeps of the course around the
 ## camera is not made for more (about 2.85 to 1).
 const WIDEST_VIEW := 640
@@ -131,7 +135,14 @@ var _settings := Settings.new()
 ## Null when the run is automated.
 var _menu: Menu
 var _state := PLAYING
+## What was last written to BEST_TIMES.
+var _times_kept := PackedByteArray()
 var _snapshot := ""
+## True when the machine starts from `_snapshot`, false when as a board
+## just switched on (which only the hand-written game can).
+var _from_snapshot := false
+## True when the best times are kept from one run to the next.
+var _keeps_times := false
 var _hand_written := true
 ## True runs the program translated from the ROM, with the hand-written
 ## routines in place of their originals unless `_hand_written` is false.
@@ -167,6 +178,7 @@ func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--snapshot="):
 			_snapshot = arg.trim_prefix("--snapshot=")
+			_from_snapshot = true
 			automated = true
 		elif arg.begins_with("--shot="):
 			shot_path = arg.trim_prefix("--shot=")
@@ -250,8 +262,11 @@ func _ready() -> void:
 	# the original's program
 	if seedlog != "" or _comparing or _keep_video_ram or not _native_video:
 		_program = true
+	if _program:
+		_from_snapshot = true
+	_keeps_times = not automated and not _from_snapshot
 	if not _start_machine():
-		push_error("Could not start: need the ROM files and %s%s" % [_snapshot,
+		push_error("Could not start: need the ROM files%s%s" % [" and " + _snapshot if _from_snapshot else "",
 				", and the generated program" if _program else ""])
 		get_tree().quit(1)
 		return
@@ -282,14 +297,23 @@ func _ready() -> void:
 	_refresh()
 
 
-## Makes the machine anew from the snapshot it starts from, in place of the
-## one there was.
+## Makes the machine anew, in place of the one there was: as a board just
+## switched on, or from the snapshot it starts from.
 func _start_machine() -> bool:
 	_finish_sound_task()
+	_keep_best_times()
 	if machine != null:
 		machine.release()
 	machine = MachineLoader.create(_hand_written, _program)
-	if machine == null or MachineLoader.load_snapshot(machine, _snapshot) != OK:
+	if machine == null:
+		return false
+	if not _from_snapshot:
+		var kept := PackedByteArray()
+		if _keeps_times and FileAccess.file_exists(BEST_TIMES):
+			kept = FileAccess.get_file_as_bytes(BEST_TIMES)
+		Decomp.power_on(machine, kept)
+		_times_kept = Decomp.kept_times(machine)
+	elif MachineLoader.load_snapshot(machine, _snapshot) != OK:
 		machine = null
 		return false
 	machine.first_course = maxi(_stage, 0)
@@ -397,7 +421,22 @@ func _resume() -> void:
 	_menu.close()
 
 
+## Writes the best times to where the next machine finds them, as the
+## board keeps them while it is off.
+func _keep_best_times() -> void:
+	if machine == null or not _keeps_times:
+		return
+	var times := Decomp.kept_times(machine)
+	if times == _times_kept:
+		return
+	var file := FileAccess.open(BEST_TIMES, FileAccess.WRITE)
+	if file != null:
+		file.store_buffer(times)
+		_times_kept = times
+
+
 func _quit() -> void:
+	_keep_best_times()
 	_save_recording()
 	get_tree().quit()
 
@@ -774,6 +813,7 @@ func _report_halt() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_keep_best_times()
 		_save_recording()
 
 
