@@ -39,7 +39,19 @@ const GROUPS: Array[GDScript] = [
 	preload("res://game/car_showcase.gd"),
 	preload("res://game/best_times_screen.gd"),
 	preload("res://game/how_to_play.gd"),
+	preload("res://game/best_times.gd"),
+	preload("res://game/title_screen.gd"),
+	preload("res://game/closing_picture.gd"),
+	preload("res://game/memory_card.gd"),
+	preload("res://game/start_prompt.gd"),
+	preload("res://game/system.gd"),
+	preload("res://game/main_loop.gd"),
 ]
+## What a machine without the translated program needs besides.
+const NATIVE_GROUPS: Array[GDScript] = [
+	preload("res://game/native_drawing.gd"),
+]
+const TopOfGame := preload("res://game/main_loop.gd")
 
 
 ## All groups, for `machine`, which keeps them alive from then on.
@@ -65,6 +77,21 @@ static func install(machine: NeoGeoMachine, only: Array[int] = []) -> int:
 	return count
 
 
+## Makes `machine`, which has no translated program, run the hand-written
+## game alone.
+static func install_native(machine: NeoGeoMachine) -> void:
+	var made := groups(machine)
+	for script in NATIVE_GROUPS:
+		made.append(script.new(machine))
+	machine.set_meta(&"hand_written", made)
+	for group in made:
+		var table := group.routines()
+		for address: int in table:
+			machine.replace_routine(address, table[address])
+		if group.get_script() == TopOfGame:
+			machine.native = group.frame
+
+
 ## Gives the game more room than the original's tables have (see
 ## NeoGeoMachine.more_room). Call after `install`, before the game runs.
 static func make_room(machine: NeoGeoMachine) -> void:
@@ -73,4 +100,5 @@ static func make_room(machine: NeoGeoMachine) -> void:
 	for group: GameRoutines in made:
 		var hooks := group.room_hooks()
 		for address: int in hooks:
-			machine.hook_block(address, hooks[address])
+			if not machine.native.is_valid():
+				machine.hook_block(address, hooks[address])

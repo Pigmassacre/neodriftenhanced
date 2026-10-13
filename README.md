@@ -45,16 +45,20 @@ hardware would. The rest are listed at the top of `Project/game.gd`.
 
 ## How it works
 
-- `Tools/recomp/` translates the game's 68000 program into GDScript
-  (`data/game/code/`), one function per basic block.
-- `Project/game/` is the game hand-written in readable GDScript, routine by
-  routine, each replacing its translated original and checked against it.
-  So far: the race but for drawing it (the car, the other cars, scenery and
-  effects, the ground lookup, the clock, the HUD) and the order of screens
-  around it, about a quarter of the code that runs. Hand-written code takes
-  no CPU time, so the game no longer slows down where the original did.
-- `Project/machine/neogeo_machine.gd` is the machine that code runs on:
-  registers, memory map, video registers, raster timer, interrupts.
+- `Project/game/` is the game, hand-written in readable GDScript from the
+  original's 68000 program, routine by routine. It is all the game runs:
+  its main loop, its screens, the race, and a small stand-in for the arcade
+  board's system program (coins, credits, start buttons). It takes its
+  tables and pictures from the ROM by address, and takes no time to speak
+  of, so the game no longer slows down where the original did.
+- `Tools/recomp/` translates the original program into GDScript
+  (`data/game/code/`), one function per basic block. The game does not load
+  it; it is there to check the hand-written routines against, each put in
+  place of its translated original (`--original-program`, and the
+  verification below).
+- `Project/machine/neogeo_machine.gd` is the machine both run on: memory
+  map and video registers, and for the translated program the processor's
+  registers, raster timer and interrupts.
 - `Project/video/` draws the picture with shaders. Normally from the game's
   own records (`game_scene.gd`): the ground straight from the course's map
   and each object from its record, at any width, with the original's code
@@ -69,11 +73,12 @@ hardware would. The rest are listed at the top of `Project/game.gd`.
   it plays on the sound chip (FM, square waves and noise, sampled sound).
   The chip's seventh sampled channel (ADPCM-B) makes no sound yet.
 - The game starts from a machine snapshot taken in MAME just after boot
-  (`Tools/make_start_snapshot.py`), so the BIOS power-on tests are not modelled.
+  (`Tools/make_start_snapshot.py`), for the memory the board's system leaves
+  the game: its settings, the best times, the colours.
 
-If the game reaches code the translator has not seen, it stops, logs the
-address to `data/game/seeds.txt`, and `Tools/recomp/build_code.py` will
-include it on the next run.
+If the translated program reaches code the translator has not seen, it stops,
+logs the address to `data/game/seeds.txt`, and `Tools/recomp/build_code.py`
+will include it on the next run.
 
 ## Verifying against MAME
 

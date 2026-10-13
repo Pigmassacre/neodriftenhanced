@@ -175,6 +175,13 @@ const REACH_HEIGHT := 0x1400
 const REACH_X := 0x70
 const REACH_Y := 0x50
 const WHERE_CARS_TOUCH := 0x1A9A6
+## By the rival's direction, three points of it; by the player's car's
+## direction, a picture of that car in cells.
+const TOUCH_POINTS := 0x1AAD6
+const CAR_SHAPES := 0x1AC56
+const SHAPE_WIDTH := 0x70
+const SHAPE_HEIGHT := 0x50
+const SHAPE_COLUMNS := 14
 const GROUND_CODE := 0x13E74
 const ADD_EFFECT := 0x1458C
 
@@ -226,6 +233,7 @@ func routines() -> Dictionary:
 		0xCA2E: note_on_screen,
 		0xCA58: note_near,
 		0x1A962: within_reach,
+		0x1A9A6: where_cars_touch,
 		0xCE08: func() -> void: m.d0 = with_low16(m.d0, 0),
 		0xC34A: set_up_all,
 		0xC3A4: set_up,
@@ -1103,6 +1111,41 @@ func hide_shadow() -> void:
 ## $D498
 func hide_wheels() -> void:
 	Sprite.show(m, u32(m.a6 + WHEELS_SPRITE), false)
+
+
+## $1A9A6: where the rival in A6 touches the player's car in A4. Three
+## points of the rival, which depend on its angle, are looked up in a
+## picture of the player's car at its angle: 14 by 10 cells of 8 pixels,
+## each the angle of the car's side there or negative where the car is
+## not. The first of the points that is on the car gives D0 (the angle)
+## and D1 (4, 1 or 2: which point); D1 is 0 when none is.
+func where_cars_touch() -> void:
+	var rival := m.a6
+	var player := m.a4
+	var dx := (u16(rival + X) - u16(player + Car.X)) & 0xFFFF
+	var dy := (u16(rival + Y) - u16(player + Car.Y)) & 0xFFFF
+	var points := TOUCH_POINTS + wrap16(u16(rival + PICTURE_DIRECTION) * 12)
+	var places: Array[int] = []
+	for index: int in [2, 0, 1]:
+		var x := (rom_u16(points + index * 4) + dx) & 0xFFFF
+		var y := (rom_u16(points + index * 4 + 2) + dy) & 0xFFFF
+		places.append((x << 16) | y)
+	m.d0 = places[0]
+	var shape := rom_u32(CAR_SHAPES + wrap16(u16(player + Car.PICTURE_DIRECTION) * 4))
+	var found := 0
+	for index in 3:
+		var place := places[index]
+		if (place >> 16) >= SHAPE_WIDTH or (place & 0xFFFF) >= SHAPE_HEIGHT:
+			continue
+		var row := (place >> 3) & 0x1FFF
+		var cell := (((place >> 19) & 0xFFFF) + row * SHAPE_COLUMNS) & 0xFFFF
+		if index == 0:
+			m.d0 = (row << 16) | cell
+		m.d0 = (m.d0 & 0xFFFFFF00) | rom_u8(shape + cell)
+		if m.d0 & 0x80 == 0:
+			found = [4, 1, 2][index]
+			break
+	m.d1 = found
 
 
 ## $D4A6: notes whether it touches the player's car, and tells that car.

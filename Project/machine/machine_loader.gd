@@ -16,11 +16,14 @@ static func repo_dir() -> String:
 	return ProjectSettings.globalize_path("res://").path_join("..").simplify_path()
 
 
-## Returns the machine (an instance of the generated program), or null.
-## With `hand_written`, the routines of Project/game/ replace their
-## translated originals (all of them, or those named by a command line
-## argument --only-routines=ADDRESS,ADDRESS... in hexadecimal).
-static func create(hand_written := true) -> NeoGeoMachine:
+## Returns the machine, or null. It runs the hand-written game of
+## Project/game/ alone, unless `translated`: then it is an instance of the
+## program generated from the ROM, in which, with `hand_written`, the
+## routines of Project/game/ replace their translated originals (all of
+## them, or those named by a command line argument
+## --only-routines=ADDRESS,ADDRESS... in hexadecimal). That is for checking
+## the hand-written game against the original (Tools/verify_session.py).
+static func create(hand_written := true, translated := true) -> NeoGeoMachine:
 	var root := repo_dir()
 	var file := FileAccess.get_file_as_bytes(root.path_join(PROGRAM_ROM))
 	var bios := FileAccess.get_file_as_bytes(root.path_join(BIOS_ROM))
@@ -30,6 +33,11 @@ static func create(hand_written := true) -> NeoGeoMachine:
 	# The file already holds little-endian words; its second megabyte is
 	# mapped at address 0 and its first at 0x200000.
 	var rom := file.slice(0x100000) + file.slice(0, 0x100000)
+	if not translated:
+		var game := NeoGeoMachine.new()
+		game.setup(rom, bios)
+		Decomp.install_native(game)
+		return game
 	var script := load(root.path_join(PROGRAM_SCRIPT)) as GDScript
 	if script == null:
 		push_error("Generated program missing - run Tools/recomp/build_code.py")

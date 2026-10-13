@@ -21,11 +21,10 @@ decompilation needs it.
    whole game runs.
 2. Keep rendering, input and audio native Godot.
 3. Hand-write the game routine by routine in `Project/game/`, each checked
-   against its translated original. **Under way**: 210 routines (3835 of the
-   16729 instructions that run in the recorded sessions): the whole race
-   but for drawing (the car and its engine sound, the other cars, the
-   things on the course, the ground lookup, the race clock, the HUD) and
-   the state machines above it.
+   against its translated original. **Done as far as the game goes**: the
+   game runs on the hand-written code alone, and that is how it is started
+   (see "The game without the translated program" below). The translated
+   program is loaded only to compare with the original.
 4. Draw from the game's own records instead of the hardware's video RAM.
    **Done** (see "Drawing" below): the sprite builder and the ground code
    are no longer run by the game, and a race is drawn up to 640 pixels wide.
@@ -34,6 +33,63 @@ Nothing derived from the ROMs may be committed: `data/`, `neodrift/` and
 `neogeo/` are git-ignored on purpose. The hand-written code in
 `Project/game/` is committed; the tables it reads stay in the ROM and are
 referred to by address.
+
+## The game without the translated program
+
+`MachineLoader.create(hand_written, translated)`: without `translated` the
+machine is a plain `NeoGeoMachine` with no blocks, `Decomp.install_native`
+puts every hand-written routine in its table, and `machine.native` is
+`game/main_loop.gd`'s `frame`, which `run_frame` calls once a frame. That
+is what `game.gd` runs unless it is asked to compare with the original
+(`--original-program`, `--translated`, `--seedlog`, `--compare-views`,
+`--hardware-video`, `--keep-video-ram`). It loads in under a second; the
+translated program takes five.
+
+- `main_loop.gd` is the original's start-up (`$122`, `$744`, `$B34`), its
+  interrupt at the start of a frame (`$22C`) and one turn of its loop
+  (`$B80`) with the twenty states under it. The original waits in the loop
+  for the interrupt; here a frame is one call.
+- `system.gd` is what the game needs of the board's system program,
+  written anew from what that program does and not from its code: the
+  players' sticks and buttons, coins and credits, the start of a game, the
+  title asked for when a credit is in, and three services the game calls.
+  None of the system's accounts, tests or screens.
+- `native_drawing.gd` has `$120E0` and `$133FA` without what they do to the
+  video hardware; the picture comes from `GameScene`, which stands in for
+  `$1229E`, `$13546` and `$1348E` as before.
+- `m.call_routine(address)` calls the hand-written routine at an address
+  (the routines still call each other by address in many places, with the
+  registers the original would have had). An address nothing is written
+  for is reported once (`no routine at $...`) and skipped.
+- The machine still starts from `data/game/start.snapshot`, for what the
+  system had left in memory when the game was first given the screen: the
+  board's settings, the lists of best times, the palettes. The registers
+  and the program counter in it are not used.
+- Hand-written code takes no time, so there is no clock: the random
+  numbers are stepped a number of times a frame that depends on the stick
+  (`main_loop.gd`, `frame`), where the original steps them for as long as
+  it waits.
+
+`Project/tools/native_probe.gd` runs it without a window as fast as it
+goes and prints the states it passes through and anything missing:
+
+```
+Godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path Project -s res://tools/native_probe.gd -- --frames=30000 --coin=100 --drive
+```
+
+What is not checked against the original, because it has no counterpart
+that returns or because the original does more: `frame`, `begin_frame`,
+`turn`, `set_going`, the two states that give the screen back (`$CC6`,
+`$E6E`), `system.gd`'s `every_frame`, and `native_drawing.gd`. They were
+tried by running: the attract mode through all its courses, a game from a
+coin to game over and back to the attract mode, a race driven.
+
+What was left out as never reached on an arcade board without a card
+slot: the states of a home console (14-17: `$7E1C`, `$7E86`, `$72BC`,
+`$7314`), the screens of a memory card (5 and 11: `$1A118`, `$1A1CA`), the
+start of a game on a board for America (`$806`) and on a console (`$88A`),
+and the first set-up of the best times (`$10D0`-`$1278`, done before the
+snapshot).
 
 ## Decompilation
 
@@ -602,7 +658,8 @@ python3 verify_session.py practice_steer --translated --compare-views   # the sc
     a CRT shader; the reworked menus with stored options; the reworked HUD.
     The menus were only tried with scripted key presses: no gamepad, no
     mouse, not by hand.
-15. Generated code load time is about 5 s (6 MB of GDScript). Fine for now.
+15. Generated code load time is about 5 s (6 MB of GDScript). The game
+    itself no longer loads it.
 
 ## Traps that cost time
 

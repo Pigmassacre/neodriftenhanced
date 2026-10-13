@@ -38,6 +38,9 @@ extends Node2D
 ##   --topup=OFFSET:BELOW:VALUE keeps a work RAM word topped up (as tools/replay.gd)
 ##   --seedlog=PATH             random seeds from a MAME run (as tools/replay.gd), so
 ##                              screenshots can be compared pixel for pixel
+##   --original-program         run the program translated from the ROM, with the hand-written
+##                              routines in place of their originals (--translated: without);
+##                              slow to load, for comparing with the original
 ##   --no-sound                 run without the sound board
 ##   --record-audio=PATH        write the sound produced to a WAV file (saved on quit)
 ##   --shot=PATH --shot-frame=N[,N...]  save a screenshot after each of those frame
@@ -130,6 +133,9 @@ var _menu: Menu
 var _state := PLAYING
 var _snapshot := ""
 var _hand_written := true
+## True runs the program translated from the ROM, with the hand-written
+## routines in place of their originals unless `_hand_written` is false.
+var _program := false
 var _native_video := true
 var _keep_video_ram := false
 ## The stage of a game of one stage alone, or -1.
@@ -178,6 +184,9 @@ func _ready() -> void:
 			automated = true
 		elif arg == "--translated":
 			_hand_written = false
+			_program = true
+		elif arg == "--original-program":
+			_program = true
 		elif arg == "--no-sound":
 			use_sound = false
 		elif arg.begins_with("--topup="):
@@ -237,8 +246,13 @@ func _ready() -> void:
 	if sound != null:
 		sound.capturing = _record_path != ""
 		sound.muted = not shot_frames.is_empty()
+	# what compares with the original or draws as its hardware does needs
+	# the original's program
+	if seedlog != "" or _comparing or _keep_video_ram or not _native_video:
+		_program = true
 	if not _start_machine():
-		push_error("Could not start: need the generated program and %s" % _snapshot)
+		push_error("Could not start: need the ROM files and %s%s" % [_snapshot,
+				", and the generated program" if _program else ""])
 		get_tree().quit(1)
 		return
 	if seedlog != "":
@@ -274,7 +288,7 @@ func _start_machine() -> bool:
 	_finish_sound_task()
 	if machine != null:
 		machine.release()
-	machine = MachineLoader.create(_hand_written)
+	machine = MachineLoader.create(_hand_written, _program)
 	if machine == null or MachineLoader.load_snapshot(machine, _snapshot) != OK:
 		machine = null
 		return false

@@ -12,12 +12,14 @@ extends GameRoutines
 const CELLS_ACROSS := 0x102BFE
 const CELLS_DOWN := 0x102C00
 const CELL_MAP := 0x102C02
+const CELL_COUNT := 0x102C06
 const CELL_BLOCKS := 0x102C08
 ## The unpacked blocks, most recently used first: for each the course
 ## position of its top left (y, then x) and the address of its 256 codes.
 const UNPACKED := 0x1027DE
 const UNPACKED_COUNT := 4
 const BLOCK_CODES := 0x100
+const UNPACKED_CODES := 0x1027FE
 ## In a packed block a byte below $80 is a code, $80 ends the block, and
 ## any other byte says how many times the byte after it is repeated.
 const PACKED_END := 0x80
@@ -25,12 +27,26 @@ const PACKED_END := 0x80
 
 func routines() -> Dictionary:
 	return {
+		0x13E14: func() -> void: set_up(m.a4, m.a5),
 		0x13E74: code_at_registers,
 	}
 
 
 func scratch() -> Dictionary:
-	return {0x13E74: ["ccr"]}
+	return {0x13E14: ["ccr"], 0x13E74: ["ccr"]}
+
+
+## $13E14: the course's cells are those of the map at `map` and the list of
+## blocks at `blocks`, and nothing is unpacked.
+func set_up(map: int, blocks: int) -> void:
+	set16(CELLS_ACROSS, m.r16(map))
+	set16(CELLS_DOWN, m.r16(map + 2))
+	set32(CELL_MAP, map + 4)
+	set16(CELL_COUNT, m.r16(blocks))
+	set32(CELL_BLOCKS, blocks + 2)
+	for index in UNPACKED_COUNT:
+		set32(UNPACKED + index * 8, 0xFFFFFFFF)
+		set32(UNPACKED + index * 8 + 4, UNPACKED_CODES + index * BLOCK_CODES)
 
 
 ## $13E74: the code at D0, D2 on the course, left in the low byte of D0.

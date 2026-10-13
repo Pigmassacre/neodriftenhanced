@@ -27,6 +27,9 @@ const DOWN := 0x02
 const LEFT := 0x04
 const RIGHT := 0x08
 const BUTTON_A := 0x10
+## The players' select buttons pressed on this frame, in bits 1 and 3. A
+## home console pauses the game with them; an arcade board has none.
+const START_PRESSED := 0x10FDAD
 const BUTTON_B := 0x20
 const BUTTON_C := 0x40
 const BUTTON_D := 0x80
@@ -38,6 +41,7 @@ func routines() -> Dictionary:
 		0x11AE0: read_into_register,
 		0x10EF4: func() -> void: set_each_repeat(m.d0 & 0xFF, m.d1 & 0xFF),
 		0x10F18: func() -> void: m.d0 = with_low16(m.d0, read_each()),
+		0x10DE2: func() -> void: _into_register(u8(START_PRESSED) & (2 if low16(m.d0) == 0 else 8) != 0),
 		0x10E10: func() -> void: _into_register(held(low16(m.d0), BUTTON_A)),
 		0x10E36: func() -> void: _into_register(pressed(low16(m.d0), BUTTON_A)),
 		0x10E5C: func() -> void: _into_register(held(low16(m.d0), BUTTON_B)),
@@ -46,7 +50,7 @@ func routines() -> Dictionary:
 
 
 func scratch() -> Dictionary:
-	return {0x10EF4: ["ccr"], 0x10F18: ["ccr"], 0x11AC6: ["ccr"], 0x11AE0: ["ccr"], 0x10E10: ["ccr"], 0x10E36: ["ccr"], 0x10E5C: ["ccr"],
+	return {0x10DE2: ["d1", "ccr"], 0x10EF4: ["ccr"], 0x10F18: ["ccr"], 0x11AC6: ["ccr"], 0x11AE0: ["ccr"], 0x10E10: ["ccr"], 0x10E36: ["ccr"], 0x10E5C: ["ccr"],
 			0x10E82: ["ccr"]}
 
 

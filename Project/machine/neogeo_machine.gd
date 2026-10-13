@@ -136,6 +136,10 @@ var steady_shadows := false
 ## The course a game starts with (game/game_flow.gd): 0 is the practice
 ## course, as in the original.
 var first_course := 0
+## When set, the machine has no translated program: this is called for
+## every frame (game/main_loop.gd's `frame`), and the hand-written routines
+## are all there is to call.
+var native := Callable()
 
 var input_p1 := 0
 var input_p2 := 0
@@ -184,6 +188,11 @@ func setup(program_rom: PackedByteArray, bios_rom: PackedByteArray) -> void:
 ## Runs `callback` every time execution reaches the block at `address`.
 ## Costs nothing for blocks that are not hooked.
 func hook_block(address: int, callback: Callable) -> void:
+	if not _table.has(address):
+		# a machine without the translated program has routines alone
+		if native.is_valid():
+			replace_routine(address, callback)
+		return
 	var original: Callable = _table[address]
 	_table[address] = func() -> int:
 		callback.call()
@@ -194,6 +203,7 @@ func hook_block(address: int, callback: Callable) -> void:
 ## back to it, which would keep it and the hand-written routines alive.
 func release() -> void:
 	_table = {}
+	native = Callable()
 	remove_meta(&"hand_written")
 
 
@@ -223,6 +233,17 @@ func replace_routine(address: int, routine: Callable) -> void:
 ## for the vertical blank in places) the next frame starts inside it: the
 ## frame that `run_frame` was running is then twice as long.
 func call_routine(address: int) -> void:
+	if native.is_valid():
+		var routine: Variant = _table.get(address)
+		if routine == null:
+			if missing_block != address:
+				push_error("no routine at $%X" % address)
+			missing_block = address
+			return
+		a7 = (a7 - 4) & 0xFFFFFFFF
+		w32(a7, CALL_RETURN)
+		routine.call()
+		return
 	var stack := a7
 	a7 = (a7 - 4) & 0xFFFFFFFF
 	w32(a7, CALL_RETURN)
@@ -247,6 +268,12 @@ func call_routine(address: int) -> void:
 
 ## Runs one video frame, starting where the vertical blank begins.
 func run_frame() -> void:
+	if native.is_valid():
+		midframe_y.clear()
+		midframe_text.clear()
+		_tick_auto_anim()
+		native.call()
+		return
 	_begin_frame()
 	while cyc < _deadline and not halted:
 		_take_events()

@@ -2,7 +2,9 @@
 
 ## When static recomp is finished
 
-- Actual decompilation, not just a static recompilation (under way)
+- [x] Actual decompilation, not just a static recompilation: the game runs
+  on the hand-written code alone; the translated program is only loaded to
+  compare with the original
 
 ## When decomp is finished
 
