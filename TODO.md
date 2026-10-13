@@ -38,6 +38,7 @@
 - [x] The diagonal wipe runs corner to corner of the wide picture
 - [x] The game starts paused behind the main menu
 - [x] Car selection: cars moving in and out are drawn outside the original picture's width
+- [x] The CRT look of opencircuitbreakers, with its curved glass
 
 ## Future stuff
 

@@ -131,7 +131,9 @@ var _picture: TextureRect
 var _pixel := 1.0
 var _whole_pixels := false
 var _enlarge_material: ShaderMaterial
+## The picture-tube look: drawn over the picture and all that is on it.
 var _crt_material: ShaderMaterial
+var _crt_glass: ColorRect
 var _crt := false
 var _window_shots := false
 var _map: Minimap
@@ -581,8 +583,18 @@ func _set_up_screen() -> void:
 	move_child(_picture, 0)
 	_enlarge_material = ShaderMaterial.new()
 	_enlarge_material.shader = preload("res://video/enlarge.gdshader")
+	_picture.material = _enlarge_material
 	_crt_material = ShaderMaterial.new()
 	_crt_material.shader = preload("res://video/crt.gdshader")
+	var over_all := CanvasLayer.new()
+	over_all.layer = 10
+	add_child(over_all)
+	_crt_glass = ColorRect.new()
+	_crt_glass.material = _crt_material
+	_crt_glass.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	over_all.add_child(_crt_glass)
+	# the mouse points at the bent picture
+	get_window().window_input.connect(_bend_mouse)
 	_map = Minimap.new()
 	_map.machine = machine
 	_map.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -634,11 +646,34 @@ func _fit_view() -> void:
 
 
 func _show_crt() -> void:
-	# below three screen pixels to a line there is no room for the look
-	var on := _crt and _pixel >= 3
-	_picture.material = _crt_material if on else _enlarge_material
-	_picture.material.set_shader_parameter("picture_size", Vector2(_screen.size))
+	_enlarge_material.set_shader_parameter("picture_size", Vector2(_screen.size))
 	_enlarge_material.set_shader_parameter("scale", _pixel)
+	_crt_glass.visible = _crt
+	_crt_glass.position = _picture.position
+	_crt_glass.size = _picture.size
+	_crt_material.set_shader_parameter("curve", _crt_curve())
+	_crt_material.set_shader_parameter("lines", NeoGeoVideo.SCREEN.y if _pixel >= 3.0 else _picture.size.y / 3.0)
+	_crt_material.set_shader_parameter("pitch", maxf(_pixel, 3.0))
+	_crt_material.set_shader_parameter("place", _picture.position)
+	_crt_material.set_shader_parameter("size", _picture.size)
+
+
+func _crt_curve() -> float:
+	return _settings.crt_curve * Settings.MOST_CRT_CURVE
+
+
+## Where on the flat picture a point of the bent one is from (crt.gdshader).
+func _unbent(at: Vector2) -> Vector2:
+	var bent := (at - _picture.position) / _picture.size * 2.0 - Vector2.ONE
+	bent *= Vector2.ONE + _crt_curve() * Vector2(bent.y * bent.y, bent.x * bent.x)
+	return _picture.position + (bent + Vector2.ONE) * 0.5 * _picture.size
+
+
+func _bend_mouse(event: InputEvent) -> void:
+	var mouse := event as InputEventMouse
+	if mouse != null and _crt:
+		mouse.position = _unbent(mouse.position)
+		mouse.global_position = _unbent(mouse.global_position)
 
 
 func _unhandled_key_input(event: InputEvent) -> void:

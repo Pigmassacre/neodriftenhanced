@@ -176,6 +176,7 @@ func _show() -> void:
 			_switch("Wide picture", "picture", "wide")
 			_switch("Whole-number scaling", "picture", "whole_pixels")
 			_switch("Picture-tube look", "picture", "crt")
+			_volume("Curve of the tube", "crt_curve", "picture")
 			_switch("See-through shadows", "picture", "translucency")
 			_item("Back", _back)
 		"sound":
@@ -358,7 +359,8 @@ func _window_size() -> void:
 		tell.call())
 
 
-func _volume(text: String, property: String) -> void:
+## A row that sets a setting from 0 to 1 in VOLUME_STEPS steps.
+func _volume(text: String, property: String, section := "sound") -> void:
 	var parts := HBoxContainer.new()
 	parts.add_theme_constant_override("separation", int(2.0 * _unit))
 	var bar := ProgressBar.new()
@@ -387,7 +389,7 @@ func _volume(text: String, property: String) -> void:
 	tell.call()
 	_row(text, parts, func(direction: int) -> void:
 		var steps := roundi(float(settings.get(property)) * VOLUME_STEPS)
-		_change("sound", property, clampi(steps + direction, 0, VOLUME_STEPS) / float(VOLUME_STEPS))
+		_change(section, property, clampi(steps + direction, 0, VOLUME_STEPS) / float(VOLUME_STEPS))
 		tell.call())
 
 

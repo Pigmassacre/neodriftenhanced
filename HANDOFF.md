@@ -437,9 +437,15 @@ the window's resolution. Screenshots (`--shot`) are of `_screen`, so they
 are in game pixels as before; `--window-shot` takes the window.
 
 - **`video/crt.gdshader`** (F2, `--crt`) is the picture-tube look:
-  scanlines with beams wider where brighter, pixels run together across,
-  a stripe mask and a little glow. Only used from three screen pixels to a
-  game pixel. Its amounts are uniforms, for an options menu to set.
+  the one of opencircuitbreakers, fitted to the game's picture. It is a
+  rectangle over the picture and everything on it (HUD, map, menus; a
+  canvas layer of its own in `game.gd`) that draws what is under it
+  again: the glass curved (the Picture options' "Curve of the tube"),
+  a dark band between the game's lines, a stripe mask, the colours a
+  little apart towards the corners, and the corners darker. Below three
+  screen pixels to a game line the bands are three screen pixels apart
+  instead. The mouse is bent the same way (`_bend_mouse`), so it points
+  at what it seems to in the menus.
 - **`hud/minimap.gd`** (M, `--no-map`) is the map in a race, on every
   course. The game has no picture of a course as a whole, so the road is
   found in the ground's codes (`ground.gd`: one for every 8 by 8 pixels,
@@ -455,8 +461,7 @@ are in game pixels as before; `--window-shot` takes the window.
   last was. Road more than `OFF_ROUTE` from the other cars' waypoints
   (`rival.gd`) is drawn in another colour: the ways they do not take. The
   practice course has no waypoints, so none there. The driven part is the
-  car's own trail. It is shown while `NeoGeoVideo.hud_shown`, and is not
-  behind the CRT look. Its panel takes the shape of the course, as large
+  car's own trail. It is shown while `NeoGeoVideo.hud_shown`. Its panel takes the shape of the course, as large
   as fits between the time and the speed, and wider the wider the picture
   is (`_most_room`).
 - **`hud/race_hud.gd`** (F3, the Game options, `--hud=`) is the HUD of a

@@ -35,6 +35,8 @@ const HUD_NEW := 0
 const HUD_ORIGINAL := 1
 const HUD_NONE := 2
 const HUD_NAMES: Array[String] = ["New", "Original", "None"]
+## The curve of the picture tube's glass at its most (video/crt.gdshader).
+const MOST_CRT_CURVE := 0.15
 ## How far a stick or trigger must be moved to count.
 const STICK_MOVED := 0.5
 const BUTTON_NAMES: Array[String] = [
@@ -63,6 +65,8 @@ var vsync := true
 var wide := true
 var whole_pixels := false
 var crt := false
+## How much the picture tube's glass curves, from 0 to 1.
+var crt_curve := 0.3
 var translucency := true
 ## The game.
 var map := true
@@ -78,7 +82,7 @@ var controls := {}
 
 ## The properties kept in the file, by section.
 const KEPT := {
-	"picture": ["full_screen", "window_size", "vsync", "wide", "whole_pixels", "crt", "translucency"],
+	"picture": ["full_screen", "window_size", "vsync", "wide", "whole_pixels", "crt", "crt_curve", "translucency"],
 	"game": ["hud", "map", "free_continues"],
 	"sound": ["volume", "music", "effects"],
 }

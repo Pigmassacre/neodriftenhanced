@@ -22,7 +22,7 @@ Godot/Godot_v4.7.2-stable_linux.x86_64 --path Project
 
 It starts with a menu, over a still frame of the game: **Arcade** is the whole game, **Freeplay** any one
 stage, and **Options** has the picture (full screen, window size, wide
-picture, CRT look, see-through shadows), the sound (volume, music, effects),
+picture, CRT look and how curved its glass is, see-through shadows), the sound (volume, music, effects),
 the controls and the game (new or original HUD, map, free continues). Options are kept in
 Godot's user folder for the project (`settings.cfg`).
 
