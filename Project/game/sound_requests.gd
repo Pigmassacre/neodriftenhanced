@@ -31,13 +31,15 @@ var _waiting: Array[int] = []
 
 func routines() -> Dictionary:
 	return {
+		0x15108: reset,
+		0x15146: func() -> void: set16(STOP_MUSIC, 1),
 		0x15256: request_from_register,
 		0x15150: send_next,
 	}
 
 
 func scratch() -> Dictionary:
-	return {0x15256: ["ccr"], 0x15150: ["ccr"]}
+	return {0x15108: ["ccr"], 0x15146: ["ccr"], 0x15256: ["ccr"], 0x15150: ["ccr"]}
 
 
 ## $15256: asks for the sound in D0. Numbers above $FF are sent as two bytes.
@@ -96,3 +98,16 @@ func send_next() -> void:
 		set32(NEXT_SENT, QUEUE if next == QUEUE_END else next)
 		set16(SENT_FIRST_BYTE, 0)
 	set16(FRAMES_TO_WAIT, 2)
+
+
+## $15108: forgets what is asked for, and has the sound hardware reset.
+func reset() -> void:
+	set16(FIELD_1032A6, m.d0)
+	set16(SENT_FIRST_BYTE, 0)
+	set16(FRAMES_TO_WAIT, 0)
+	set32(NEXT_SENT, QUEUE)
+	set32(NEXT_FREE, QUEUE)
+	for entry in range(QUEUE, QUEUE_END, 2):
+		set16(entry, 0)
+	_waiting.clear()
+	set16(RESET_STEP, 1)

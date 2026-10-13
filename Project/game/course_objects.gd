@@ -63,6 +63,9 @@ const CELL_MAP := 0x103210
 const CELL_LISTS := 0x103216
 ## By kind, the address of three routines: set up, remove, update.
 const KINDS := 0x10321C
+## How many lists and kinds there are; nothing reads them.
+const CELL_LIST_COUNT := 0x103214
+const KIND_COUNT := 0x10321A
 
 ## The camera: the course position at the screen's top left, and the zoom
 ## across and down (8.8). The same a frame ago.
@@ -106,6 +109,10 @@ var _wider_before := -1
 
 func routines() -> Dictionary:
 	return {
+		0x14072: set_up,
+		0x1410E: clear_away,
+		0x14144: camera_from_registers,
+		0x14152: zoom_from_registers,
 		0x14160: update_all,
 		0x141AA: place,
 		0x141FA: add,
@@ -129,6 +136,8 @@ func scratch() -> Dictionary:
 			"a0", "a1", "a2", "a3", "a4", "a5", "a6", "ccr"]
 	var drawing := ["d0", "d1", "d2", "d3", "a0", "a3", "ccr"]
 	return {
+		0x14144: ["ccr"],
+		0x14152: ["ccr"],
 		0x141AA: ["d0", "d2", "a0", "ccr"],
 		0x141FA: drawing,
 		0x14240: ["ccr"],
@@ -183,6 +192,67 @@ func _clear_more_slots() -> void:
 			remove()
 		Sprite.free_record(m, sprite)
 		set32(slot + SPRITE, 0)
+
+
+## $14072: sets up the scenery of a course, seen by a camera at D0, D1
+## with zoom D2, D3. A4 is the course's map of cells (cells across, cells
+## down, then a word for each cell), A5 its lists of scenery by cell and
+## A6 the kinds of scenery (each a count and then addresses). Changes no
+## register.
+func set_up() -> void:
+	set16(CAMERA + CAMERA_X, m.d0)
+	set16(CAMERA + CAMERA_Y, m.d1)
+	set16(CAMERA + ZOOM_X, m.d2)
+	set16(CAMERA + ZOOM_Y, m.d3)
+	# a camera a frame ago far enough off for everything to count as new
+	set16(CAMERA_BEFORE + CAMERA_X, m.d0)
+	set16(CAMERA_BEFORE + CAMERA_Y, m.d1 + WINDOW_SPAN + 1)
+	set16(CAMERA_BEFORE + ZOOM_X, m.d2)
+	set16(CAMERA_BEFORE + ZOOM_Y, m.d3)
+	set16(CELLS_ACROSS, m.r16(m.a4))
+	set16(CELLS_DOWN, m.r16(m.a4 + 2))
+	set32(CELL_MAP, m.a4 + 4)
+	set16(CELL_LIST_COUNT, m.r16(m.a5))
+	set32(CELL_LISTS, m.a5 + 2)
+	set16(KIND_COUNT, m.r16(m.a6))
+	set32(KINDS, m.a6 + 2)
+	for index in SLOT_COUNT:
+		var slot := _slot(index)
+		var sprite := Sprite.take_record(m)
+		set32(slot + UPDATE, 0)
+		set32(slot + SPRITE, sprite)
+		if sprite != 0:
+			Sprite.show(m, sprite, false)
+	if m.more_room:
+		_set_up_more_slots()
+	update_all()
+
+
+## $1410E: removes everything and gives the slots' sprite objects back.
+## Changes no register.
+func clear_away() -> void:
+	var saved := [m.d0, m.a0, m.a1]
+	for index in SLOT_COUNT:
+		var slot := _slot(index)
+		if u32(slot + UPDATE) != 0:
+			m.a1 = slot
+			remove()
+		Sprite.free_record(m, u32(slot + SPRITE))
+	if m.more_room:
+		_clear_more_slots()
+	m.d0 = saved[0]; m.a0 = saved[1]; m.a1 = saved[2]
+
+
+## $14144: the camera's place in D0 and D2.
+func camera_from_registers() -> void:
+	set16(CAMERA + CAMERA_X, m.d0)
+	set16(CAMERA + CAMERA_Y, m.d2)
+
+
+## $14152: its zoom in D0 and D2.
+func zoom_from_registers() -> void:
+	set16(CAMERA + ZOOM_X, m.d0)
+	set16(CAMERA + ZOOM_Y, m.d2)
 
 
 ## $14160: one frame of everything on the course. Changes no register.

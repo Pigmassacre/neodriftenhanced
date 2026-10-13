@@ -97,6 +97,9 @@ const PROGRESS_LABEL := 0x10348E
 const PROGRESS_BAR := 0x103492
 const PROGRESS_MARKER := 0x103496
 const PROGRESS_FRAMES := 0x10349A
+const PROGRESS_CAR := 0x103466
+const BAR_PICTURE := 0x4C
+const MARKER_PICTURES := 0x50
 ## The pictures of things other than the course's own.
 const PICTURES := 0x80008
 const LABEL_NO_CHECKPOINTS := 0x48
@@ -120,6 +123,19 @@ func routines() -> Dictionary:
 		0xFC9E: show_slow_ground,
 		0xFD1C: draw_slow_sign,
 		0x19F82: show_progress,
+		0x19E38: set_up_progress,
+		0x19F42: clear_progress,
+		0x19F74: func() -> void:
+			set16(CHECKPOINTS_REACHED, m.d0)
+			set16(CAR_Y, m.d2),
+		0xFC74: draw_demo_label,
+		0xFC84: reset_slow_sign,
+		0xFD34: func() -> void: _write_text(PAUSE_TEXT, PAUSE_CELL),
+		0xFD4E: func() -> void: _write_text(PAUSE_BLANK, PAUSE_CELL),
+		0xFD74: draw_course_label,
+		0xFDB8: set_up_time_taken,
+		0xFE60: set_up_time_left,
+		0x100BE: set_up_speed,
 	}
 
 
@@ -133,6 +149,17 @@ func scratch() -> Dictionary:
 		0xFC9E: free,
 		0xFD1C: free,
 		0x19F82: ["a0", "ccr"],
+		0x19E38: ["ccr"],
+		0x19F42: ["ccr"],
+		0x19F74: ["ccr"],
+		0xFC74: free,
+		0xFC84: ["ccr"],
+		0xFD34: free,
+		0xFD4E: free,
+		0xFD74: free,
+		0xFDB8: free + ["d7"],
+		0xFE60: free,
+		0x100BE: free,
 	}
 
 
@@ -288,3 +315,125 @@ func show_progress() -> void:
 	set16(PROGRESS_FRAMES, frames)
 	set16(marker + PALETTE_OVERRIDE, PALETTE_FLASH if frames & 0x7F == 0 or frames & 0x7F == 5 else 0)
 	m.a0 = marker
+
+
+# --- setting the HUD up ------------------------------------------------------
+
+const COURSE := 0x101202
+## Blocks of cells: what labels a race of the attract mode, the label of
+## the practice course, that of the others and their
+## numbers, and the frame of the speed.
+const DEMO_LABEL := 0x27936
+const DEMO_LABEL_CELL := 0x7045
+const PRACTICE_LABEL := 0x277FE
+const STAGE_LABEL := 0x2782E
+const STAGE_NUMBERS := 0x27852
+const COURSE_LABEL_CELL := 0x735A
+const STAGE_NUMBER_CELL := 0x747A
+const SPEED_FRAME := 0x277F2
+const SPEED_FRAME_CELL := 0x711A
+## Text: over the time taken, beside the time left, and for a paused game.
+const TIME_TAKEN_LABEL := 0xFDFC
+const TIME_TAKEN_LABEL_CELL := 0x7043
+const TIME_TAKEN_FIRST_CELL := 0x70E3
+const TIME_LEFT_UNIT := 0xFEC6
+const TIME_LEFT_UNIT_CELL := 0x7424
+const PAUSE_TEXT := 0xFD68
+const PAUSE_BLANK := 0xFD6E
+const PAUSE_CELL := 0x726E
+
+
+## $FC74
+func draw_demo_label() -> void:
+	Text.draw_block(m, DEMO_LABEL, DEMO_LABEL_CELL)
+	m.set_sr(m.get_sr() & 0xF8FF)
+
+
+## $FC84
+func reset_slow_sign() -> void:
+	set16(SLOW_SIGN_COUNTDOWN, SLOW_SIGN_FRAMES)
+	set16(SLOW_SIGN, 0)
+	set16(SLOW_SIGN_BEFORE, 0)
+
+
+## $FD74: which course this is, at the bottom right.
+func draw_course_label() -> void:
+	var course := u16(COURSE)
+	if course == 0:
+		Text.draw_block(m, PRACTICE_LABEL, COURSE_LABEL_CELL)
+	else:
+		Text.draw_block(m, STAGE_LABEL, COURSE_LABEL_CELL)
+		Text.draw_block(m, rom_u32(STAGE_NUMBERS + wrap16(course * 4)), STAGE_NUMBER_CELL)
+	m.set_sr(m.get_sr() & 0xF8FF)
+
+
+## $FDB8
+func set_up_time_taken() -> void:
+	for index in 8:
+		set32(TIME_TAKEN_TEXT + index * 4, 0)
+	set16(TIME_TAKEN_CELL, TIME_TAKEN_FIRST_CELL)
+	_write_text(TIME_TAKEN_LABEL, TIME_TAKEN_LABEL_CELL)
+
+
+## $FE60
+func set_up_time_left() -> void:
+	set32(SECONDS_COUNTED, 0)
+	set16(TIME_LEFT_SHOWN, u16(RaceClock.TIME_LEFT))
+	set32(SECOND_DIGITS_LEFT, 0)
+	set32(HUNDREDTH_DIGITS_LEFT, 0)
+	set16(TIME_LEFT_PALETTE, PALETTE_RUNNING)
+	Text.draw_block(m, TIME_LEFT_LABEL, TIME_LEFT_LABEL_CELL)
+	_write_text(TIME_LEFT_UNIT, TIME_LEFT_UNIT_CELL)
+	show_time_left()
+
+
+## $100BE
+func set_up_speed() -> void:
+	Text.draw_block(m, SPEED_FRAME, SPEED_FRAME_CELL)
+	show_speed()
+
+
+## Writes the text at `text` in the program, up to a zero, in the small font.
+func _write_text(text: int, cell: int) -> void:
+	var characters := PackedByteArray()
+	while m.r8(text) != 0:
+		characters.append(m.r8(text))
+		text += 1
+	Text.write(m, characters, cell, PALETTE_WHITE, SMALL_FONT)
+	m.set_sr(m.get_sr() & 0xF8FF)
+
+
+## $19E38: the bar of a course: A3 has a count and then the y of the start,
+## of each checkpoint and of the finish; D0 is the checkpoints reached, D1
+## the car chosen and D2 the car's y.
+func set_up_progress() -> void:
+	var places := m.a3
+	set16(PROGRESS_CAR, m.d1)
+	var count := wrap16(m.r16(places) - 2)
+	set16(CHECKPOINT_COUNT, count)
+	set16(CHECKPOINTS_REACHED, m.d0)
+	set16(CAR_Y, m.d2)
+	for index in count + 1:
+		var y := m.r16(places + 2 + index * 2)
+		set16(CHECKPOINT_Y + index * 2, y)
+		set16(STRETCH_LENGTH + index * 2, y - m.r16(places + 4 + index * 2))
+	var label := Sprite.take_record(m)
+	set32(PROGRESS_LABEL, label)
+	set16(label + Sprite.DEPTH, 0x7001)
+	Sprite.place(m, label, BAR_X, 0x40)
+	var bar := Sprite.take_record(m)
+	set32(PROGRESS_BAR, bar)
+	set16(bar + Sprite.DEPTH, 0x7000)
+	Sprite.picture(m, bar, m.r32(m.r32(PICTURES) + BAR_PICTURE))
+	var marker := Sprite.take_record(m)
+	set32(PROGRESS_MARKER, marker)
+	set16(marker + Sprite.DEPTH, 0x7002)
+	# the marker is the car chosen
+	Sprite.picture(m, marker, m.r32(m.r32(PICTURES) + MARKER_PICTURES + mini(u16(PROGRESS_CAR), 2) * 4))
+	set16(PROGRESS_FRAMES, 10)
+
+
+## $19F42
+func clear_progress() -> void:
+	for sprite: int in [PROGRESS_MARKER, PROGRESS_BAR, PROGRESS_LABEL]:
+		Sprite.free_record(m, u32(sprite))

@@ -18,6 +18,13 @@ const TIME_TAKEN := 0x10333C
 ## stretches between checkpoints, then the whole course.
 const COURSE_TIMES := 0x103340
 const COURSE_COUNT := 7
+const TIMES := 0x10335C
+const TIMES_SIZE := 0x22
+## By difficulty and by what machine it is: how much time passes in a
+## frame, and the address of the times gained by course (14 words).
+const DIFFICULTY := 0x1011F8
+const MACHINE := 0x101506
+const CLOCKS := 0x2DEB4
 const WHOLE_COURSE := 0x1C
 ## Time gained at each checkpoint of this course.
 const TIME_GAINED := 0x10344A
@@ -29,6 +36,8 @@ const GIVE_UP_AT := -1200
 
 func routines() -> Dictionary:
 	return {
+		0x169A8: set_up_course_times,
+		0x169C4: set_up,
 		0x16A44: count_down,
 		0x16AA8: gain_time,
 		0x16AC4: total_of_all_courses,
@@ -39,6 +48,8 @@ func routines() -> Dictionary:
 
 func scratch() -> Dictionary:
 	return {
+		0x169A8: ["d7", "a0", "a1", "ccr"],
+		0x169C4: ["d0", "d1", "d7", "a0", "a1", "ccr"],
 		0x16A44: ["d1", "d2", "a0", "ccr"],
 		0x16AA8: ["ccr"],
 		0x16AC4: ["d7", "ccr"],
@@ -84,3 +95,23 @@ func total_of_course() -> void:
 ## $149BA
 func show_checkpoint_sign() -> void:
 	set16(CHECKPOINT_SIGN_FRAMES, 0x3C)
+
+
+## $169A8: where each course's times are.
+func set_up_course_times() -> void:
+	for course in COURSE_COUNT:
+		set32(COURSE_TIMES + course * 4, TIMES + course * TIMES_SIZE)
+
+
+## $169C4: the clock at the start of a race.
+func set_up() -> void:
+	set16(TIME_UP, 0)
+	var times := u32(COURSE_TIMES + wrap16(u16(COURSE) * 4))
+	for index in TIMES_SIZE / 2:
+		set16(times + index * 2, 0)
+	var clock := m.r32(m.r32(CLOCKS + wrap16(u16(DIFFICULTY) * 4)) + wrap16(u16(MACHINE) * 4))
+	set32(TIME_STEP, m.r32(clock))
+	var gained := m.r32(m.r32(clock + 4) + wrap16(u16(COURSE) * 4))
+	for index in 14:
+		set16(TIME_GAINED + index * 2, m.r16(gained + index * 2))
+	set32(TIME_LEFT, u32(TIME_GAINED))

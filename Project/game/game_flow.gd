@@ -48,6 +48,17 @@ const CONTINUES_LEFT := 0x100416
 ## 1 when a game goes on from where an earlier one stopped.
 const RESUMING := 0x10042E
 const RESUMED_GAME := 0x10349C
+## What is kept of a game to go on with it: the player's name, the course
+## reached, and the times of the courses.
+const RESUMED_NAME := 0x14
+const RESUMED_COURSE := 0x18
+const RESUMED_TIMES := 0x1A
+const NAME := 0x1011FE
+## By course, 1 if other cars drive on it.
+const RIVALS_BY_COURSE := 0xD694
+const MACHINE_INTO_REGISTER := 0xD70C
+const MACHINE := 0x101506
+const FORGET_CAR_CHOICE := 0x15C16
 
 const GAME_STATES := 0xB076
 const COURSES_STATES := 0xB2D0
@@ -173,6 +184,10 @@ func routines() -> Dictionary:
 		0xB7EC: race_pause,
 		0xB800: race_paused,
 		0xB826: set_up_hud,
+		0xB044: set_up_game,
+		0xD68C: func() -> void: m.d0 = with_low16(m.d0, m.r16(RIVALS_BY_COURSE + wrap16(low16(m.d0) * 2))),
+		0x16950: restore_times,
+		0x1696C: keep_for_resuming,
 	}
 
 
@@ -180,6 +195,8 @@ func scratch() -> Dictionary:
 	var all := {}
 	for address: int in routines():
 		all[address] = ["ccr"]
+	for address: int in [0x16950, 0x1696C]:
+		all[address] = ["d7", "a0", "a1", "a5", "ccr"]
 	return all
 
 
@@ -251,8 +268,8 @@ func start_game() -> void:
 	m.call_routine(0x169A8)
 	if u16(RESUMING) == 1:
 		m.a0 = RESUMED_GAME
-		set16(COURSE, u16(RESUMED_GAME + 0x18))
-		m.a0 = RESUMED_GAME + 0x14
+		set16(COURSE, u16(RESUMED_GAME + RESUMED_COURSE))
+		m.a0 = RESUMED_GAME + RESUMED_NAME
 		m.a1 = 0x1011FE
 		m.call_routine(0x11A02)
 		m.call_routine(0x16950)
@@ -584,3 +601,36 @@ func race_paused() -> void:
 		m.call_routine(HIDE_PAUSE)
 		set16(RACE_STATE, RACE_DRIVING)
 	m.d0 = with_low16(m.d0, 1)
+
+
+## $B044: before a game.
+func set_up_game() -> void:
+	m.call_routine(MACHINE_INTO_REGISTER)
+	set16(MACHINE, m.d0)
+	set16(GAME_STATE, GAME_SET_UP_CAR_CHOICE)
+	m.call_routine(FORGET_CAR_CHOICE)
+	m.d0 = with_low16(m.d0, 0)
+
+
+## $1696C: keeps what a later game needs to go on from here.
+func keep_for_resuming() -> void:
+	var course := u16(COURSE)
+	set16(RESUMED_GAME + RESUMED_COURSE, course)
+	for index in course + 1:
+		var times := u32(RaceClock.COURSE_TIMES + index * 4)
+		set32(RESUMED_GAME + RESUMED_TIMES + index * 4, u32(times + RaceClock.WHOLE_COURSE))
+	var from := NAME
+	var to := RESUMED_GAME + RESUMED_NAME
+	while true:
+		set8(to, u8(from))
+		if u8(from) == 0:
+			break
+		from += 1
+		to += 1
+
+
+## $16950: the times of the courses of the game that is gone on with.
+func restore_times() -> void:
+	for index in RaceClock.COURSE_COUNT:
+		var times := u32(RaceClock.COURSE_TIMES + index * 4)
+		set32(times + RaceClock.WHOLE_COURSE, u32(RESUMED_GAME + RESUMED_TIMES + index * 4))

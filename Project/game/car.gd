@@ -237,6 +237,60 @@ const CAR_REPORT := 0x10165E
 const TIME_UP := 0x103332
 ## Which course is being driven.
 const COURSE := 0x101202
+## Which of the three cars the player chose, how hard the game is set, and
+## what machine it runs on (0 to 2, by the system ROM's country).
+const CHOSEN_CAR := 0x1011FA
+const DIFFICULTY := 0x1011F8
+const MACHINE := 0x101506
+const COUNTRY := 0x10FD83
+const MACHINE_BY_COUNTRY := 0xD71C
+const PLAYER := 0x1011FC
+## 1 when other cars are on the course.
+const RIVALS_PRESENT := 0x101222
+const CARS_TOUCHING_BEFORE := 0x1014FA
+## What a car is set up from: addresses of its first $30 words, of the $19
+## words from OWN_SURFACE by course, of the six from SIZE_X by machine and
+## car, and of the $19 from TOP_SPEED by difficulty and car.
+const FIRST_FIELDS := 0x236FE
+const COURSE_FIELDS := 0x23702
+const CAR_FIELDS := 0x23706
+const SPEED_FIELDS := 0x2370A
+## The address of the table of the pictures of each car: five addresses.
+const CAR_PICTURES := 0x80000
+const COURSE_OF := 0xE6
+const CAR_OF := 0xEA
+const FIRST_START_FRAMES := 1000
+const FIRST_FRAMES_SINCE_BOUNCE := 100
+const FIRST_BACKFIRE_WAITS := 0x26EA0
+## By course, the car a demonstration drives and then its inputs.
+const DEMOS := 0x24F6C
+## By course: the map of the ground and its tiles, the ground codes and
+## their blocks, the cells of scenery and their lists, and the signs.
+const COURSES := 0x200000
+const KINDS_OF_SCENERY := 0x2E794
+const CHECKPOINTS_BY_COURSE := 0x2240E
+const SET_UP_GROUND_CODES := 0x13E14
+const SET_UP_SCENERY := 0x14072
+const SET_UP_SIGNS := 0x14652
+const SET_UP_PROGRESS := 0x19E38
+const FORGET_EFFECTS := 0x14584
+const CLEAR_SCENERY := 0x1410E
+const CLEAR_PROGRESS := 0x19F42
+const GROUND_OFF := 0x133FA
+const CLEAR_SPRITES := 0x120E0
+const SET_UP_CLOCK := 0x169C4
+const SET_UP_RIVALS := 0xC34A
+const DRAW_RIVALS := 0xD4D4
+const LOAD_COLOURS := 0x1690E
+const SLOW_SIGN_FIELDS := 0xFC84
+const RESET_ENGINE_SOUND := 0xF9E6
+## Frames since the engine was last revved before the start, and how often
+## it can be.
+const FRAMES_SINCE_REV := 0x101682
+const REV_EVERY := 6
+const SOUND_REV := 0xD4
+const COURSE_MUSIC := 0xF8C2
+const BUTTON_A := 0x10
 ## 1 while a recorded demonstration drives; where its next input byte is.
 const DEMO_PLAYING := 0x1014FC
 const DEMO_INPUT := 0x1014FE
@@ -414,6 +468,31 @@ func routines() -> Dictionary:
 		0xEF44: draw_shadow,
 		0xEF9E: draw_shadow_airborne,
 		0xF0AA: draw_wheels,
+		0xD6A8: set_up_rivals,
+		0xD6DA: draw_rivals,
+		0xD6EC: func() -> void: _demo_from_registers(),
+		0xD704: func() -> void: set16(DEMO_PLAYING, m.d0),
+		0xD70C: machine_into_register,
+		0xD722: func() -> void: set16(MACHINE, m.d0),
+		0xD72A: set_up,
+		0xDEB4: load_colours,
+		0xDF02: set_up_course,
+		0xDFAC: clear_course_away,
+		0xDFC0: func() -> void: m.call_routine(CLEAR_SPRITES),
+		0xE070: func() -> void: _take_pictures(m.a6, low16(m.d0)),
+		0xF172: show,
+		0xF19E: hide,
+		0xF1C6: first_report,
+		0xF29C: func() -> void: set16(m.a6 + SHAKE_HEIGHT, 0),
+		0xF6E6: func() -> void: set16(m.a6 + SKID_COUNTDOWN, 0),
+		0xF7C0: forget_backfire,
+		0xF87A: func() -> void: set16(FRAMES_SINCE_SQUEAL, 6),
+		0xF8AE: play_course_music,
+		0xF8D0: func() -> void: set16(FRAMES_SINCE_SCRAPE_SOUND, 0xB),
+		0xF8FE: func() -> void: set16(FRAMES_SINCE_BRAKE_SOUND, 0xB),
+		0xF942: func() -> void: set16(FRAMES_SINCE_SLIDE_SOUND, 6),
+		0xF9A8: func() -> void: set16(FRAMES_SINCE_REV, REV_EVERY),
+		0xF9B2: rev,
 	}
 
 
@@ -429,6 +508,12 @@ func scratch() -> Dictionary:
 		all[address] = ["d0.high", "d1", "d2", "d3", "d7", "a0", "ccr"]
 	for address: int in [0xD956, 0xDAA2, 0xDBF0, 0xDDA4]:
 		all[address] = all[0xDAAC]
+	for address: int in [0xD6A8, 0xD6DA, 0xD6EC, 0xD704, 0xD70C, 0xD722, 0xD72A, 0xDEB4, 0xDF02, 0xDFAC, 0xDFC0,
+			0xE070, 0xF172, 0xF19E, 0xF1C6, 0xF29C, 0xF6E6, 0xF7C0, 0xF87A, 0xF8AE, 0xF8D0, 0xF8FE, 0xF942,
+			0xF9A8, 0xF9B2]:
+		all[address] = free + ["a1", "a2", "a3", "a4"]
+	all[0xD6EC] = ["ccr"]
+	all[0xD70C] = ["ccr"]
 	all[0xF4B4] = ["ccr"]
 	all[0xF4DE] = ["ccr"]
 	all[0xF30A] = ["ccr"]
@@ -1656,3 +1741,230 @@ static func _angle_between(to: int, from: int) -> Vector2i:
 		side = -side
 		apart = (0x10000 - apart) & 0x7FFF
 	return Vector2i(apart, side)
+
+
+# --- setting a race up -------------------------------------------------------
+
+## $D6EC: the demonstration of this course: the car it drives in D0, its
+## inputs in A0.
+func _demo_from_registers() -> void:
+	var demo := m.r32(DEMOS + wrap16(u16(COURSE) * 4))
+	m.a0 = demo + 2
+	m.d0 = with_low16(m.d0, m.r16(demo))
+
+
+## $D70C
+func machine_into_register() -> void:
+	m.d0 = m.r16(MACHINE_BY_COUNTRY + u8(COUNTRY) * 2)
+
+
+## $D6A8
+func set_up_rivals() -> void:
+	if u16(RIVALS_PRESENT) == 1:
+		m.call_routine(SET_UP_RIVALS)
+	else:
+		set16(CARS_TOUCHING, 0)
+		set16(CARS_TOUCHING_BEFORE, 0)
+
+
+## $D6DA
+func draw_rivals() -> void:
+	if u16(RIVALS_PRESENT) == 1:
+		m.call_routine(DRAW_RIVALS)
+
+
+## $D72A: sets the car in A6 up at the start of its course.
+func set_up() -> void:
+	var car := m.a6
+	if u16(DEMO_PLAYING) == 1:
+		var demo := m.r32(DEMOS + wrap16(u16(COURSE) * 4))
+		set32(DEMO_INPUT, demo + 2)
+		set16(CHOSEN_CAR, m.r16(demo))
+	set16(CHECKPOINTS, 0)
+	set16(GATES_PASSED, 0)
+	m.call_routine(SET_UP_CLOCK)
+	set16(FRAMES_SINCE_SCRAPE_SOUND, 0xB)
+	set16(FRAMES_SINCE_BRAKE_SOUND, 0xB)
+	set16(FRAMES_SINCE_SLIDE_SOUND, 6)
+	m.call_routine(RESET_ENGINE_SOUND)
+	set16(FRAMES_SINCE_SQUEAL, 6)
+	m.call_routine(SLOW_SIGN_FIELDS)
+	var chosen := u16(CHOSEN_CAR)
+	_copy_words(m.r32(FIRST_FIELDS), car, 0x30)
+	_copy_words(m.r32(m.r32(COURSE_FIELDS) + wrap16(u16(COURSE) * 4)), car + OWN_SURFACE, 0x19)
+	_copy_words(m.r32(m.r32(m.r32(CAR_FIELDS) + wrap16(u16(MACHINE) * 4)) + wrap16(chosen * 4)), car + SIZE_X, 6)
+	_take_pictures(car, chosen)
+	_copy_words(m.r32(m.r32(m.r32(SPEED_FIELDS) + wrap16(u16(DIFFICULTY) * 4)) + wrap16(chosen * 4)),
+			car + TOP_SPEED, 0x19)
+	set16(car + STATE, 0)
+	set16(car + COURSE_OF, u16(COURSE))
+	set16(car + SECOND_PLAYER, u16(PLAYER))
+	set16(car + CAR_OF, chosen)
+	set16(car + DUST_KIND, u16(car + OWN_DUST_KIND))
+	set16(car + SPEED_BEFORE, 0)
+	set16(car + AIRBORNE_BEFORE, 0)
+	set16(car + GROUND_CODE, 0x50)
+	set16(car + GROUND_CODE_BEFORE, 0x50)
+	set16(car + PICTURE_ANGLE, u16(car + FACING))
+	set16(car + 0x112, 0)
+	set16(car + FIELD_114, 0)
+	set16(car + FRAMES_SINCE_KNOCK, 10)
+	set16(car + SPEED_TREND, 0)
+	set16(car + PULLING_AWAY, 0)
+	set16(car + PULLING_AWAY_BEFORE, 0)
+	set16(car + FRAMES_GAINING, 0)
+	set16(car + TOUCHED_WALL, 0)
+	set16(car + TOUCHED_WALL_BEFORE, 0)
+	set16(car + SCRAPED_WALL, 0)
+	set16(car + SCRAPED_WALL_BEFORE, 0)
+	set16(car + SCRAPES_LEFT, u16(car + DAMAGE_STAGES))
+	set16(car + DAMAGE, 0xFFFF)
+	set16(car + SLOW_GROUND, 0)
+	set16(car + STARTING, 0)
+	set16(car + START_FRAMES, FIRST_START_FRAMES)
+	set16(car + FRAMES_SINCE_BOUNCE, FIRST_FRAMES_SINCE_BOUNCE)
+	forget_backfire()
+	set_shake()
+	look_up_grip()
+	look_up_ground()
+	var body := Sprite.take_record(m)
+	set32(car + BODY_SPRITE, body)
+	set16(body + Sprite.DEPTH, u16(car + BODY_DEPTH) + u16(car + DEPTH))
+	var wheels := Sprite.take_record(m)
+	set32(car + WHEELS_SPRITE, wheels)
+	set16(wheels + Sprite.DEPTH, u16(car + WHEELS_DEPTH) + u16(car + DEPTH))
+	var shadow := Sprite.take_record(m)
+	set32(car + SHADOW_SPRITE, shadow)
+	set16(shadow + Sprite.DEPTH, u16(car + SHADOW_DEPTH) + u16(car + DEPTH))
+	set32(car + STEER_HELD, 0)
+	set16(car + STEER_HELD_EARLIEST, 0)
+	set32(car + STEER_EARLIER, 0)
+	set16(car + SPUN, 0)
+	set16(car + SPUN_FRAMES, 0)
+	show()
+	scale_margins()
+	place_camera()
+	draw_on_ground()
+	first_report()
+	set16(car + CAMERA_X_DRAWN, u16(car + CAMERA_X))
+	set16(car + CAMERA_Y_DRAWN, u16(car + CAMERA_Y))
+	m.d0 = with_low16(m.d0, 0)
+
+
+func _copy_words(from: int, to: int, count: int) -> void:
+	for index in count:
+		set16(to + index * 2, m.r16(from + index * 2))
+
+
+## $E070: the pictures of one of the three cars.
+func _take_pictures(car: int, chosen: int) -> void:
+	var pictures := m.r32(m.r32(CAR_PICTURES) + wrap16(chosen * 4))
+	for index in 5:
+		set32(car + BODY_PICTURES + index * 4, m.r32(pictures + index * 4))
+
+
+## $F7C0
+func forget_backfire() -> void:
+	var car := m.a6
+	set16(car + BACKFIRING, 0)
+	set16(car + BACKFIRE_COUNTDOWN, 0)
+	set32(car + BACKFIRE_WAITS, FIRST_BACKFIRE_WAITS)
+
+
+## $F172
+func show() -> void:
+	var car := m.a6
+	set16(car + DRAWN, 1)
+	turn_picture()
+	for sprite: int in [BODY_SPRITE, WHEELS_SPRITE, SHADOW_SPRITE]:
+		Sprite.show(m, u32(car + sprite), true)
+
+
+## $F19E
+func hide() -> void:
+	var car := m.a6
+	set16(car + DRAWN, 0)
+	for sprite: int in [BODY_SPRITE, WHEELS_SPRITE, SHADOW_SPRITE]:
+		Sprite.show(m, u32(car + sprite), false)
+
+
+## $F1C6: what `report` tells the rest of the game, before the first frame.
+func first_report() -> void:
+	var car := m.a6
+	set16(CAR_REPORT, u16(car + X))
+	set16(CAR_REPORT + 2, u16(car + Y))
+	set16(CAR_REPORT + 4, u16(car + SPEED))
+	set16(CAR_REPORT + 6, u16(car + TRAVEL))
+	set16(CAR_REPORT + 8, u16(car + SPEED))
+	set16(CAR_REPORT + 0xC, u16(car + SCREEN_X))
+	set16(CAR_REPORT + 0xE, u16(car + SCREEN_Y))
+	set16(CAR_REPORT + 0x10, u16(car + ZOOM))
+	set16(CAR_REPORT + 0x12, u16(car + HEIGHT_ON_SCREEN))
+
+
+## $DEB4: the colours of a race, and of this course.
+func load_colours() -> void:
+	for number: int in [0, 0x12, 0x13, 0x14, 0x15, 0x16, u16(COURSE) + 0x17, 0x1E]:
+		m.d0 = with_low16(m.d0, number)
+		m.call_routine(LOAD_COLOURS)
+	m.d7 = with_low16(m.d7, 0xFFFF)
+
+
+## $DF02: sets the course of the car in A6 up: its ground, its scenery,
+## its signs and its checkpoints.
+func set_up_course() -> void:
+	var car := m.a6
+	var course := m.r32(COURSES + wrap16(u16(car + COURSE_OF) * 4))
+	m.a0 = course
+	scale_margins()
+	m.d0 = with_low16(m.d0, u16(car + CAMERA_X))
+	m.d1 = with_low16(m.d1, u16(car + CAMERA_Y))
+	m.d2 = with_low16(m.d2, u16(car + ZOOM))
+	m.d3 = with_low16(m.d3, u16(car + ZOOM))
+	m.a4 = m.r32(course)
+	m.a5 = m.r32(course + 4)
+	set32(GROUND_MAP, m.a4)
+	set32(GROUND_TILES, m.a5)
+	m.call_routine(REDRAW_GROUND)
+	m.a4 = m.r32(course + 8)
+	m.a5 = m.r32(course + 0xC)
+	m.call_routine(SET_UP_GROUND_CODES)
+	m.a4 = m.r32(course + 0x10)
+	m.a5 = m.r32(course + 0x14)
+	m.a6 = KINDS_OF_SCENERY
+	m.call_routine(SET_UP_SCENERY)
+	# the original has lost the car's address here, and takes for its place
+	# two words that lie that far into the kinds of scenery
+	m.d0 = with_low16(m.d0, m.r16(KINDS_OF_SCENERY + X))
+	m.d2 = with_low16(m.d2, m.r16(KINDS_OF_SCENERY + Y))
+	m.a4 = m.r32(course + 0x18)
+	m.call_routine(SET_UP_SIGNS)
+	m.a3 = m.r32(CHECKPOINTS_BY_COURSE + wrap16(u16(COURSE) * 4))
+	m.d0 = 0
+	m.d1 = with_low16(m.d1, u16(CHOSEN_CAR))
+	m.d2 = with_low16(m.d2, m.r16(KINDS_OF_SCENERY + Y))
+	m.call_routine(SET_UP_PROGRESS)
+	m.call_routine(FORGET_EFFECTS)
+	m.a6 = car
+
+
+## $DFAC
+func clear_course_away() -> void:
+	m.call_routine(CLEAR_SCENERY)
+	m.call_routine(CLEAR_PROGRESS)
+	m.call_routine(GROUND_OFF)
+
+
+## $F8AE
+func play_course_music() -> void:
+	_request_sound(m.r16(COURSE_MUSIC + wrap16(u16(COURSE) * 2)))
+
+
+## $F9B2: before the start, button A revs the engine.
+func rev() -> void:
+	set16(FRAMES_SINCE_REV, u16(FRAMES_SINCE_REV) + 1)
+	var held := u8(PLAYER_1_INPUT if u16(PLAYER) == 0 else PLAYER_2_INPUT) & BUTTON_A != 0
+	m.d0 = with_low16(m.d0, 1 if held else 0)
+	if held and u16(FRAMES_SINCE_REV) > REV_EVERY - 1:
+		set16(FRAMES_SINCE_REV, 0)
+		_request_sound(SOUND_REV)

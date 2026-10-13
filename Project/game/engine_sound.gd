@@ -40,6 +40,7 @@ func routines() -> Dictionary:
 		0xFA18: update,
 		0xFA0C: fall_silent,
 		0xFC0A: add_note,
+		0xF9E6: reset,
 		0xFC12: forget_notes,
 		0xFC20: add_note,
 		0xFC48: take_note,
@@ -52,6 +53,7 @@ func scratch() -> Dictionary:
 		0xFA18: ["d0", "d1", "d2", "a0", "ccr"],
 		0xFA0C: ["ccr"],
 		0xFC0A: ["d1", "d2", "a0", "ccr"],
+		0xF9E6: ["ccr"],
 		0xFC12: ["ccr"],
 		0xFC20: ["d1", "d2", "a0", "ccr"],
 		0xFC48: ["d1", "a0", "ccr"],
@@ -157,3 +159,13 @@ func _end_note(note: int) -> void:
 func _request_sound(sound: int) -> void:
 	m.d0 = with_low16(m.d0, sound)
 	m.call_routine(REQUEST_SOUND)
+
+
+## $F9E6: the engine at the start of a race.
+func reset() -> void:
+	set16(NOTE, 0xFFFF)
+	set16(GEAR, 0)
+	set16(FLIGHT, JUST_LANDED)
+	set16(GEAR_FRAMES, 0)
+	forget_notes()
+	set16(NOTE_FRAMES, 0)

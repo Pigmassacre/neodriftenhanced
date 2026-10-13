@@ -9,11 +9,12 @@ const ARC_TANGENTS := 0x101E0
 func routines() -> Dictionary:
 	return {
 		0x1014C: towards_from_registers,
+		0x1018E: func() -> void: m.d0 = with_low16(m.d0, _rise(m, low16(m.d2), low16(m.d3))),
 	}
 
 
 func scratch() -> Dictionary:
-	return {0x1014C: ["ccr"]}
+	return {0x1014C: ["ccr"], 0x1018E: ["d2", "d3", "ccr"]}
 
 
 ## $1014C: the direction of D2 across and D3 down, in D0.

@@ -49,8 +49,12 @@ def hand_written():
     found = {}
     for path in glob.glob(os.path.join(HAND, "*.gd")):
         with open(path) as f:
-            for m in re.finditer(r"^\t\t0x([0-9A-Fa-f]+): (\w+),", f.read(), re.M):
+            text = f.read()
+            for m in re.finditer(r"^\t\t0x([0-9A-Fa-f]+): (\w+)", text, re.M):
                 found[int(m.group(1), 16)] = m.group(2)
+            # tables of routines that differ only in their numbers (scenery.gd)
+            for m in re.finditer(r"^\t0x([0-9A-Fa-f]+): \[", text, re.M):
+                found[int(m.group(1), 16)] = "set_up"
     return found
 
 

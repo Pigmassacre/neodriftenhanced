@@ -39,16 +39,18 @@ const RECORDS_CLEARED := 0x1217A
 func routines() -> Dictionary:
 	return {
 		0x12202: take_free_record,
+		0x12252: free_from_registers,
 		0x12256: depth_from_registers,
 		0x1225C: place_from_registers,
 		0x12266: zoom_from_registers,
 		0x12270: picture_from_registers,
+		0x12280: palette_from_registers,
 		0x12286: show_from_registers,
 	}
 
 
 func scratch() -> Dictionary:
-	return {0x12202: ["ccr"], 0x12256: ["ccr"], 0x1225C: ["ccr"], 0x12266: ["ccr"], 0x12270: ["ccr"], 0x12286: ["ccr"]}
+	return {0x12252: ["ccr"], 0x12280: ["ccr"], 0x12202: ["ccr"], 0x12256: ["ccr"], 0x1225C: ["ccr"], 0x12266: ["ccr"], 0x12270: ["ccr"], 0x12286: ["ccr"]}
 
 
 func room_hooks() -> Dictionary:
@@ -101,6 +103,16 @@ static func free_record(machine: NeoGeoMachine, sprite: int) -> void:
 func _clear_more_records() -> void:
 	for index in range(RECORD_COUNT, record_count(m)):
 		free_record(m, record(index))
+
+
+## $12252: gives the record in A0 back.
+func free_from_registers() -> void:
+	set16(m.a0 + SHOWN, 0)
+
+
+## $12280: what to add to the palettes of its picture, in D0.
+func palette_from_registers() -> void:
+	set16(m.a0 + PALETTE, m.d0)
 
 
 ## $12256: depth in D0.

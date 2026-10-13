@@ -19,10 +19,20 @@ extends RefCounted
 ## here twice, original and hand-written, and compares the outcomes.
 
 var m: NeoGeoMachine
+var _siblings := {}
 
 
 func _init(machine: NeoGeoMachine) -> void:
 	m = machine
+
+
+## The one instance of another script of this folder, for calling what it
+## has directly.
+func sibling(script: GDScript) -> GameRoutines:
+	if not _siblings.has(script):
+		for group: GameRoutines in m.get_meta(&"hand_written"):
+			_siblings[group.get_script()] = group
+	return _siblings[script]
 
 
 ## Address of each routine replaced, and the method that replaces it.
@@ -114,6 +124,11 @@ func rom_u32(address: int) -> int:
 
 
 # The game's arithmetic wraps at 16 or 32 bits.
+
+static func wrap8(value: int) -> int:
+	value &= 0xFF
+	return value - 0x100 if value >= 0x80 else value
+
 
 static func wrap16(value: int) -> int:
 	value &= 0xFFFF

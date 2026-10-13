@@ -136,12 +136,44 @@ const EFFECT_SPARKS := 6
 
 ## Which rival is being updated (0 to 2).
 const CURRENT := 0x1014F4
+## What it looks like: which model of car and which of its colours, and
+## the course it is on.
+const COURSE_OF := 0xAE
+const COLOUR := 0xB0
+const MODEL := 0xB2
+## The looks of the next car set up, of twelve (two bytes each: model and
+## colour). A race takes three in a row from a random place.
+const NEXT_LOOKS := 0x1014F6
+const LOOKS := 0x206F6
+const LOOKS_COUNT := 12
+const COURSE := 0x101202
+const DIFFICULTY := 0x1011F8
+const SEED := 0x100430
+## What a car is set up from: addresses of its first $2C words, of the
+## $16 words from OWN_SURFACE by course, of the six from SIZE_X by model,
+## and of the four from TOP_SPEED by difficulty and model.
+const FIRST_FIELDS := 0x209EA
+const COURSE_FIELDS := 0x209EE
+const MODEL_FIELDS := 0x209F2
+const SPEED_FIELDS := 0x209F6
+const RIVAL_TOP_SPEED := 0x9FF
+## The address of the table of the pictures of each model: five addresses.
+const MODEL_PICTURES := 0x80000
+## By course: which waypoint each of the three starts at, and the
+## waypoints (ten bytes each, x and y first).
+const FIRST_WAYPOINTS := 0x21048
+## The first of a model's palettes of other colours.
+const FIRST_COLOUR_PALETTE := 0xF0
 ## What touching the player's car left for the player's car to react to.
 const CARS_TOUCHING := 0x1014F8
 const TOUCHING_ANGLE := 0x1014FA
 ## Is the rival in A6 within reach of the player's car in A4 (D0)? If so,
 ## where the two touch (D0, D1).
 const CARS_WITHIN_REACH := 0x1A962
+## Cars higher up than this touch nothing; nor do cars further apart.
+const REACH_HEIGHT := 0x1400
+const REACH_X := 0x70
+const REACH_Y := 0x50
 const WHERE_CARS_TOUCH := 0x1A9A6
 const GROUND_CODE := 0x13E74
 const ADD_EFFECT := 0x1458C
@@ -193,6 +225,11 @@ func routines() -> Dictionary:
 		0xC9F4: place_on_screen,
 		0xCA2E: note_on_screen,
 		0xCA58: note_near,
+		0x1A962: within_reach,
+		0xCE08: func() -> void: m.d0 = with_low16(m.d0, 0),
+		0xC34A: set_up_all,
+		0xC3A4: set_up,
+		0xCA86: func() -> void: _take_pictures(m.a6, low16(m.d0)),
 		0xCAA8: look_up_grip,
 		0xCAE4: look_up_ground,
 		0xCB02: steer,
@@ -237,6 +274,9 @@ func scratch() -> Dictionary:
 	all[0xC558] = ["d1", "d2", "d3", "d4", "d5", "d6", "d7", "a0", "a1", "a3", "a4", "a5", "ccr"]
 	all[0xCD2E] = ["d0.high", "d1", "d2", "d3", "d6", "d7", "a0", "a1", "a3", "ccr"]
 	all[0xD4D4] = ["ccr"]
+	all[0x1A962] = ["d0.high", "ccr"]
+	for address: int in [0xC34A, 0xC3A4, 0xCA86]:
+		all[address] = free + ["a2"]
 	all[0xD566] = ["d0", "d1", "d2", "d3", "d7", "a0", "ccr"]
 	return all
 
@@ -1159,3 +1199,89 @@ func _add_effect(rival: int, x: int, y: int, speed: int, kind: int) -> void:
 ## Which of 32 directions an angle is nearest to.
 static func _direction(angle: int) -> int:
 	return ((angle + 0x400) & 0xFFFF) >> 11
+
+
+## $C34A: sets up the three other cars of a course. The practice course
+## has none.
+func set_up_all() -> void:
+	if u16(COURSE) == 0:
+		return
+	var saved := m.a6
+	m.a5 = 0x108000
+	m.d0 = (u16(SEED) & 0xFF) / LOOKS_COUNT << 16 | (u16(SEED) & 0xFF) % LOOKS_COUNT
+	set16(NEXT_LOOKS, (u16(SEED) & 0xFF) % LOOKS_COUNT)
+	for index in COUNT:
+		set16(CURRENT, index)
+		m.a6 = RIVALS + index * SIZE
+		m.d7 = with_low16(m.d7, COUNT - 1 - index)
+		set_up()
+		set16(NEXT_LOOKS, (u16(NEXT_LOOKS) + 1) % LOOKS_COUNT)
+	m.d7 = with_low16(m.d7, 0xFFFF)
+	m.a6 = saved
+
+
+## $C3A4: sets up the car in A6, the one numbered CURRENT.
+func set_up() -> void:
+	var rival := m.a6
+	var course := u16(COURSE)
+	var looks := LOOKS + u16(NEXT_LOOKS) * 2
+	var model := m.r8(looks)
+	_copy_words(m.r32(FIRST_FIELDS), rival, 0x2C)
+	_copy_words(m.r32(m.r32(COURSE_FIELDS) + course * 4), rival + OWN_SURFACE, 0x16)
+	_copy_words(m.r32(m.r32(MODEL_FIELDS) + model * 4), rival + SIZE_X, 6)
+	_take_pictures(rival, model)
+	_copy_words(m.r32(m.r32(m.r32(SPEED_FIELDS) + u16(DIFFICULTY) * 4) + model * 4), rival + TOP_SPEED, 4)
+	set16(rival + TOP_SPEED, RIVAL_TOP_SPEED)
+	set16(rival + STATE, STATE_START)
+	set16(rival + COURSE_OF, course)
+	set16(rival + COLOUR, m.r8(looks + 1))
+	set16(rival + MODEL, model)
+	set16(rival + DUST_KIND, u16(rival + OWN_DUST_KIND))
+	look_up_grip()
+	look_up_ground()
+	var waypoint := m.r8(m.r32(FIRST_WAYPOINTS + course * 4) + u16(CURRENT))
+	set16(rival + WAYPOINT, waypoint)
+	var entry := m.r32(WAYPOINTS + course * 4) + waypoint * WAYPOINT_SIZE
+	set16(rival + X, m.r16(entry))
+	set16(rival + Y, m.r16(entry + 2))
+	var facing := Angles.towards(m, wrap16(m.r16(entry + WAYPOINT_SIZE) - m.r16(entry)),
+			wrap16(m.r16(entry + WAYPOINT_SIZE + 2) - m.r16(entry + 2))) << 8
+	set16(rival + TRAVEL, facing)
+	set16(rival + FACING, facing)
+	# each a little in front of the one before
+	set16(rival + DEPTH, u16(rival + DEPTH) + u16(CURRENT) * 4)
+	var body := Sprite.take_record(m)
+	set32(rival + BODY_SPRITE, body)
+	set16(body + Sprite.DEPTH, u16(rival + BODY_DEPTH) + u16(rival + DEPTH))
+	set16(body + Sprite.PALETTE, (model * 4 + FIRST_COLOUR_PALETTE + u16(rival + COLOUR)) | 0xFF00)
+	var wheels := Sprite.take_record(m)
+	set32(rival + WHEELS_SPRITE, wheels)
+	set16(wheels + Sprite.DEPTH, u16(rival + WHEELS_DEPTH) + u16(rival + DEPTH))
+	var shadow := Sprite.take_record(m)
+	set32(rival + SHADOW_SPRITE, shadow)
+	set16(shadow + Sprite.DEPTH, u16(rival + SHADOW_DEPTH) + u16(rival + DEPTH))
+	scale_margins()
+	draw_on_ground()
+
+
+func _copy_words(from: int, to: int, count: int) -> void:
+	for index in count:
+		set16(to + index * 2, m.r16(from + index * 2))
+
+
+## $CA86: the pictures of a model of car.
+func _take_pictures(rival: int, model: int) -> void:
+	var pictures := m.r32(m.r32(MODEL_PICTURES) + wrap16(model * 4))
+	for index in 5:
+		set32(rival + BODY_PICTURES + index * 4, m.r32(pictures + index * 4))
+
+
+## $1A962: leaves 1 in D0 if the car in A6 and the player's car in A4 are
+## both low enough and near enough to touch, else 0.
+func within_reach() -> void:
+	var rival := m.a6
+	var car := m.a4
+	var near := s16(car + Car.HEIGHT) <= REACH_HEIGHT and s16(rival + HEIGHT) <= REACH_HEIGHT \
+			and ((u16(rival + X) - u16(car + Car.X) + REACH_X) & 0xFFFF) < REACH_X * 2 \
+			and ((u16(rival + Y) - u16(car + Car.Y) + REACH_Y) & 0xFFFF) < REACH_Y * 2
+	m.d0 = with_low16(m.d0, 1 if near else 0)
