@@ -9,6 +9,7 @@ extends RefCounted
 ## limits the picture to the hardware's 320 pixels and to 128 columns of
 ## objects. NeoGeoVideo draws from this instead, at any width.
 
+const Hud := preload("res://game/hud.gd")
 const SpriteObject := preload("res://game/sprite_object.gd")
 ## A record's fields (as in game/sprite_object.gd), and one more: a palette
 ## to use for every tile instead of the picture's own, when not 0.
@@ -103,6 +104,9 @@ var hardware_limits := false
 ## this, a thing shown and hidden in turn is drawn on every frame, to be
 ## seen through.
 var translucency := false
+## Leaves the bar that shows how far the next checkpoint is, with its label
+## and marker, out of a race: for a HUD drawn some other way.
+var hud_hidden := false
 
 ## The objects to draw, a column ("strip") at a time, in drawing order, and
 ## the tiles of each: four bytes a tile as the picture has them (tile number,
@@ -387,8 +391,14 @@ func _gather() -> void:
 		for record in records:
 			race = race or ram.decode_s16((record & 0xFFFF) + DEPTH) >= HUD_DEPTH
 	backdrop.x = 0
+	var left_out := PackedInt32Array()
+	if hud_hidden and race:
+		for object: int in [Hud.PROGRESS_LABEL, Hud.PROGRESS_BAR, Hud.PROGRESS_MARKER]:
+			left_out.append(_long(object & 0xFFFF) & 0xFFFF)
 	for index in records.size():
 		var record := records[index] & 0xFFFF
+		if record in left_out:
+			continue
 		var seen_through := 1 if records[index] & SEEN_THROUGH else 0
 		var columns := ram.decode_u16(record + COLUMNS)
 		if hardware_limits:

@@ -20,7 +20,7 @@ extends Node2D
 ## are A B C D (A below, B right, C left, D above), the right and left
 ## triggers are A and B too, Start is start (and pauses a race) and Back
 ## inserts a coin. F2 turns the picture-tube look on and off, M the map,
-## F11 full screen.
+## F3 changes the HUD, F11 full screen.
 ##
 ## Options after `--` (automated: --snapshot, --input, --seedlog, --shot-frame,
 ## --frames, --compare-views and --no-menu):
@@ -53,6 +53,7 @@ extends Node2D
 ##   --crt                      start with the picture-tube look on
 ##   --whole-pixels             enlarge the picture a whole number of times only
 ##   --no-map                   start with the map off
+##   --hud=new|original|none    the HUD of a race (automated: the original's)
 ##   --compare-views[=FOLDER]   draw every frame both ways, 320 pixels wide and with the
 ##                              hardware's timing and limits, and count the frames that
 ##                              differ; the first of them are saved to FOLDER
@@ -119,6 +120,7 @@ var _crt_material: ShaderMaterial
 var _crt := false
 var _window_shots := false
 var _map: Minimap
+var _hud: RaceHud
 
 var _settings := Settings.new()
 ## Null when the run is automated.
@@ -220,6 +222,12 @@ func _ready() -> void:
 		_settings.whole_pixels = true
 	if args.has("--no-map"):
 		_settings.map = false
+	if automated:
+		# what is compared with the original is the original's
+		_settings.hud = Settings.HUD_ORIGINAL
+	for arg in args:
+		if arg.begins_with("--hud="):
+			_settings.hud = maxi(Settings.HUD_NAMES.find(arg.trim_prefix("--hud=").capitalize()), 0)
 	_settings.apply_controls()
 	if not use_sound or not sound.load_roms(MachineLoader.repo_dir().path_join("neodrift")):
 		sound = null
@@ -239,6 +247,7 @@ func _ready() -> void:
 		return
 	_set_up_screen()
 	_map.fades = shot_frames.is_empty()
+	_hud.fades = shot_frames.is_empty()
 	get_viewport().size_changed.connect(_fit_view)
 	if with_menu:
 		_set_up_menu()
@@ -277,6 +286,7 @@ func _start_machine() -> bool:
 				Decomp.make_room(machine)
 	if _map != null:
 		_map.machine = machine
+		_hud.machine = machine
 		_apply_settings("picture")
 	return true
 
@@ -315,6 +325,9 @@ func _apply_settings(section: String) -> void:
 				sound.set_volumes(_settings.music, _settings.effects)
 		"game":
 			_map.wanted = _settings.map
+			# a HUD of our own takes a picture drawn from the game's records
+			video.own_hud = _settings.hud != Settings.HUD_ORIGINAL and video.scene != null
+			_hud.wanted = _settings.hud == Settings.HUD_NEW and video.scene != null
 
 
 func _apply_window() -> void:
@@ -464,6 +477,9 @@ func _set_up_screen() -> void:
 	_map.machine = machine
 	_map.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_picture.add_child(_map)
+	_hud = RaceHud.new()
+	_hud.machine = machine
+	_picture.add_child(_hud)
 
 
 ## Makes the picture as high as the window, or as wide when the window is
@@ -487,6 +503,8 @@ func _fit_view() -> void:
 	_picture.position = ((window - _picture.size) / 2).round()
 	_map.pixel = _pixel
 	_map.size = _picture.size
+	_hud.pixel = _pixel
+	_hud.size = _picture.size
 	if _menu != null:
 		_menu.position = Vector2.ZERO
 		_menu.size = window
@@ -513,6 +531,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_apply_settings("picture")
 		KEY_M:
 			_settings.map = not _settings.map
+			_apply_settings("game")
+		KEY_F3:
+			_settings.hud = (_settings.hud + 1) % Settings.HUD_NAMES.size()
 			_apply_settings("game")
 		KEY_F11:
 			_settings.full_screen = not _settings.full_screen
@@ -650,6 +671,7 @@ func _press(key: Key, pressed: bool) -> void:
 func _refresh() -> void:
 	video.refresh()
 	_map.refresh(video.hud_shown)
+	_hud.refresh(video.hud_shown)
 
 
 func _step() -> void:

@@ -23,12 +23,12 @@ Godot/Godot_v4.7.2-stable_linux.x86_64 --path Project
 It starts with a menu: **Arcade** is the whole game, **Freeplay** any one
 stage, and **Options** has the picture (full screen, window size, wide
 picture, CRT look, see-through shadows), the sound (volume, music, effects),
-the controls and the game (map, free continues). Options are kept in
+the controls and the game (new or original HUD, map, free continues). Options are kept in
 Godot's user folder for the project (`settings.cfg`).
 
 Keys, until changed in the options: arrows, `Z X C V` = buttons A B C D,
 `1` = start, `5` = insert coin, `Esc` = pause. `F2` turns the CRT look on
-and off, `M` the map, `F11` full screen.
+and off, `F3` changes the HUD, `M` the map, `F11` full screen.
 
 Gamepad: stick or d-pad, the four face buttons = A B C D (the triggers are
 A and B too), Start = start (and pause in a race), Back = insert coin.
@@ -62,7 +62,8 @@ hardware would. The rest are listed at the top of `Project/game.gd`.
   machine's video RAM as the hardware would (sprites with the hardware's
   shrink tables, text layer, palettes), which is what is compared with MAME.
 - `Project/hud/` and `Project/menu/` are what is drawn over the game's
-  picture at the window's resolution: the map of the course and the menus.
+  picture at the window's resolution: a race's HUD, the map of the course
+  and the menus.
   `Project/settings.gd` keeps the player's options.
 - `Project/sound/` runs the game's own Z80 sound driver and synthesises what
   it plays on the sound chip (FM, square waves and noise, sampled sound).

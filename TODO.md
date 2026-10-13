@@ -23,7 +23,7 @@
     - other options
   - Quit to desktop
 - [x] Gamepad support
-- [ ] Reworked HUD, toggleable
+- [x] Reworked HUD, toggleable
   - Not pixel art
 - [x] CRT shader option
 

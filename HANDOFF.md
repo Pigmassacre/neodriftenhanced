@@ -368,6 +368,16 @@ are in game pixels as before; `--window-shot` takes the window.
   65536), and a car is put on it by its offset from the nearest waypoint.
   The practice course has no waypoints and gets no map. It is shown while
   `NeoGeoVideo.hud_shown`, and is not behind the CRT look.
+- **`hud/race_hud.gd`** (F3, the Game options, `--hud=`) is the HUD of a
+  race drawn with a scalable font: time taken, time left, speed, the bar to
+  the next checkpoint, the stage and "Speed down". It reads the game's own
+  values (`hud.gd`, `race_clock.gd`). While it (or no HUD) is chosen,
+  `NeoGeoVideo.own_hud` leaves the original's out: in a race everything on
+  the text layer is HUD (credits line included), so the layer is emptied
+  between its masking columns, and the three objects of the checkpoint bar
+  are skipped (`GameScene.hud_hidden`). The countdown, "Check Point",
+  the turn signs and the banners are other objects and stay as they are.
+  An automated run keeps the original's HUD.
 - **Controls** are input actions (`game_up`, `game_a`, ...) made by
   `settings.gd` from the player's choices: a key and two gamepad places
   each. Every connected pad is player 1; there is no second player.
@@ -578,12 +588,9 @@ python3 verify_session.py practice_steer --translated --compare-views   # the sc
       authority.
 14. Of the enhancements of `TODO.md`, these are in (see "Drawing" above):
     the wide view, menus included; real translucency; the minimap; gamepads;
-    a CRT shader; the reworked menus with stored options. Not started: the
-    reworked HUD, which can be drawn over the picture at the window's
-    resolution like the minimap; its values are in `hud.gd` and
-    `race_clock.gd`, and the original's HUD would then have to be left out
-    of the text layer and the objects (depth `$7000` and up). The menus were
-    only tried with scripted key presses: no gamepad, no mouse, not by hand.
+    a CRT shader; the reworked menus with stored options; the reworked HUD.
+    The menus were only tried with scripted key presses: no gamepad, no
+    mouse, not by hand.
 15. Generated code load time is about 5 s (6 MB of GDScript). Fine for now.
 
 ## Traps that cost time

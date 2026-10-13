@@ -186,6 +186,7 @@ func _show() -> void:
 			_item("Back", _back)
 		"game":
 			_title.text = "Game"
+			_choice("HUD", "game", "hud", Settings.HUD_NAMES)
 			_switch("Map of the course", "game", "map")
 			_switch("Free continues", "game", "free_continues")
 			_item("Back", _back)
@@ -326,6 +327,17 @@ func _switch(text: String, section: String, property: String) -> void:
 	tell.call()
 	_row(text, value, func(_direction: int) -> void:
 		_change(section, property, not settings.get(property))
+		tell.call())
+
+
+## A row that goes through the values of a setting that is a number from
+## 0 on, each with a name.
+func _choice(text: String, section: String, property: String, names: Array[String]) -> void:
+	var value := _label("")
+	var tell := func() -> void: value.text = names[clampi(settings.get(property), 0, names.size() - 1)]
+	tell.call()
+	_row(text, value, func(direction: int) -> void:
+		_change(section, property, posmod(int(settings.get(property)) + direction, names.size()))
 		tell.call())
 
 

@@ -70,6 +70,10 @@ var view_width := int(SCREEN.x):
 ## True while a race's HUD is shown: in a race, drawn from the game's
 ## records, and not while the game blacks the screen out.
 var hud_shown := false
+## Leaves the original's HUD out of a race drawn from the game's records:
+## all of the text layer between the columns that mask the picture's
+## sides, and the checkpoint bar.
+var own_hud := false
 
 var _colours := PackedInt32Array()
 var _palette_bytes := PackedByteArray()
@@ -427,8 +431,11 @@ func refresh() -> void:
 	_backdrop.color = Color8(_palette_bytes[0xFFF * 4], _palette_bytes[0xFFF * 4 + 1], _palette_bytes[0xFFF * 4 + 2])
 	_sprite_material.set_shader_parameter("auto_anim", machine.auto_anim_counter)
 	_sprite_material.set_shader_parameter("auto_anim_enabled", (machine.lspc_mode & 8) == 0)
-	var covered := _draw_text()
-	hud_shown = from_scene and scene.in_race and scene.ground_on and not covered
+	var racing := from_scene and scene.in_race and scene.ground_on
+	if scene != null:
+		scene.hud_hidden = own_hud
+	var covered := _draw_text(own_hud and racing)
+	hud_shown = racing and not covered
 	var in_race := from_scene and scene.in_race and scene.ground_on and view_width > int(SCREEN.x)
 	# the HUD goes to the picture's edges, but not while the game is
 	# blacking the screen out with the same layer
@@ -532,7 +539,9 @@ func _draw_video_ram() -> void:
 
 ## The text layer as video RAM has it. Returns whether any of it is taken
 ## to go on to the sides of a wider picture.
-func _draw_text() -> bool:
+## Returns whether the layer covers the picture. `without_hud` leaves a
+## layer that does not cover it empty, but for the columns at its sides.
+func _draw_text(without_hud := false) -> bool:
 	var vram: PackedInt32Array = machine.vram
 	# Text changed while the picture was being drawn shows the old text above
 	# the raster line of the change. A cell can change twice in a frame (the
@@ -590,6 +599,12 @@ func _draw_text() -> bool:
 			if solid[vram[at] & 0xFFF] != CLEAR and solid[vram[at - 32] & 0xFFF] != CLEAR:
 				whole = true
 		_cell_bytes.encode_u32((row * CELLS_WIDTH + WHOLE_ROWS) * 4, 0 if whole else 0xFF000000)
+	if without_hud and not covered:
+		var clear := solid.find(CLEAR)
+		for row in 32:
+			for column in range(_mask_columns.x, 40 - _mask_columns.y):
+				for version in 3:
+					_cell_bytes.encode_u32((row * CELLS_WIDTH + column) * 4 + version * 160, clear)
 	_cells_tex.update(Image.create_from_data(CELLS_WIDTH, 32, false, Image.FORMAT_RGBA8, _cell_bytes))
 	_fix_material.set_shader_parameter("fix_tex", _fix_cart if machine.fix_from_cart else _fix_bios)
 	return covered

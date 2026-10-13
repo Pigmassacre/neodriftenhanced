@@ -31,6 +31,10 @@ const DEFAULT_CONTROLS := {
 	"coin": ["key:%d" % KEY_5, "button:%d" % JOY_BUTTON_BACK, ""],
 	"pause": ["key:%d" % KEY_ESCAPE, "button:%d" % JOY_BUTTON_START, ""],
 }
+const HUD_NEW := 0
+const HUD_ORIGINAL := 1
+const HUD_NONE := 2
+const HUD_NAMES: Array[String] = ["New", "Original", "None"]
 ## How far a stick or trigger must be moved to count.
 const STICK_MOVED := 0.5
 const BUTTON_NAMES: Array[String] = [
@@ -62,6 +66,8 @@ var crt := false
 var translucency := true
 ## The game.
 var map := true
+## The HUD of a race: HUD_NEW, HUD_ORIGINAL or HUD_NONE.
+var hud := HUD_NEW
 var free_continues := true
 ## The sound, each from 0 to 1.
 var volume := 1.0
@@ -73,7 +79,7 @@ var controls := {}
 ## The properties kept in the file, by section.
 const KEPT := {
 	"picture": ["full_screen", "window_size", "vsync", "wide", "whole_pixels", "crt", "translucency"],
-	"game": ["map", "free_continues"],
+	"game": ["hud", "map", "free_continues"],
 	"sound": ["volume", "music", "effects"],
 }
 
