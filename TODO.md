@@ -29,6 +29,16 @@
   - Not pixel art
 - [x] CRT shader option
 
+## Polish
+
+- [x] Menu backdrops that don't tile cleanly: mirror them when repeating for the wide picture
+- [x] Menu backdrops flash black in the wide parts of the picture
+- [x] Minimap is squeezed and hard to read on some stages
+- [x] Options changed in the pause menu show at once in the game behind
+- [x] The diagonal wipe runs corner to corner of the wide picture
+- [x] The game starts paused behind the main menu
+- [x] Car selection: cars moving in and out are drawn outside the original picture's width
+
 ## Future stuff
 
 - Level editor / custom level support

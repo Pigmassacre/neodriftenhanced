@@ -347,21 +347,34 @@ beyond them:
   which is what the routine check runs.
 - **Other screens** keep their objects to the middle 320 pixels (they park
   things just off the hardware's screen, and rely on positions coming
-  round in nine bits), but their backdrop is repeated to both sides. A
+  round in nine bits; each strip is cut to them in `_add_strip`), but their
+  backdrop is repeated to both sides. A
   backdrop is one of two things. Either the objects drawn first, when they
   are a row of pictures as high as the screen that lie side by side across
   it (`GameScene._find_backdrop`; the menus' scrolling "Drift Out", the
-  stage introductions). Or the ground, where what shows of it repeats
+  stage introductions). Such a row comes round in nine bits, so any of its
+  pictures may be its left end: the row is tried from each. A row wider
+  than the screen was made to scroll and repeats as it is; one exactly 320
+  wide is a single picture whose sides do not match, and every other copy
+  of it is drawn the other way round (a bit of the strip's packed word,
+  `sprites.gdshader`). Or the ground, where what shows of it repeats
   itself tile for tile at least twice (`NeoGeoVideo._ground_period`; the
   rankings and totals). A picture that does not repeat (the title, the
   ending) has the colour behind everything at its sides.
+  What the hand-written game puts in `NeoGeoMachine.open_records` is drawn
+  wherever it is: the cars of the car choice (`car_choice.gd`'s `_widen`),
+  which come from the picture's edge and slide across all of it, the car
+  that leaves on six sprite objects of its own.
 - **The text layer** stays in the middle (`fix.gdshader`). The game fills
   its first and last column (two on some screens) with a black tile to
   hide the ground's ragged edges; those columns are left out. It also
   blacks the screen out with black tiles for the wipes between screens;
   where the next column in holds a tile of one colour, that colour is
-  carried on to the picture's edge, so a wipe covers the sides too (row by
-  row, not along the wipe's diagonal).
+  carried on to the picture's edge. The curtain that opens and closes a
+  race (`wipe.gd`) is not drawn from its cells in a wider picture: while
+  it moves, `fix.gdshader` leaves its cells out and draws it from two
+  corners of the picture to the line between the other two, as far closed
+  as the game's own state says (`NeoGeoVideo._wipe_closed`).
 - **The HUD** of a race goes to the picture's edges: the text layer is
   drawn in three parts (columns up to 14 in the upper half and up to 12 in
   the lower go left, columns from 26 go right; a row with text across such
@@ -385,8 +398,10 @@ course. At 640 wide Stage 1 uses at most 29 slots.
 Left to do:
 
 - The camera still frames the car for 320 pixels (`aim_camera`).
-- Screens whose backdrop is one picture 320 wide (the stage introductions)
-  repeat it with a visible seam.
+- The results' backdrop is built up by bands 288 pixels wide before the
+  ground takes over: the sides are empty for those 44 frames.
+- The attract mode's cars (`car_showcase.gd`) still leave at the edges of
+  the middle 320 pixels.
 - Never looked at in a wide view: two players, continuing, name entry
   after a ranked game, and the other cars in a game (the attract demos'
   were).
@@ -441,7 +456,9 @@ are in game pixels as before; `--window-shot` takes the window.
   (`rival.gd`) is drawn in another colour: the ways they do not take. The
   practice course has no waypoints, so none there. The driven part is the
   car's own trail. It is shown while `NeoGeoVideo.hud_shown`, and is not
-  behind the CRT look.
+  behind the CRT look. Its panel takes the shape of the course, as large
+  as fits between the time and the speed, and wider the wider the picture
+  is (`_most_room`).
 - **`hud/race_hud.gd`** (F3, the Game options, `--hud=`) is the HUD of a
   race drawn with a scalable font: time taken, time left, speed, the bar to
   the next checkpoint, the stage and "Speed down". It reads the game's own
@@ -462,8 +479,11 @@ are in game pixels as before; `--window-shot` takes the window.
 the picture at the window's resolution; `settings.gd` holds the options and
 keeps them in `user://settings.cfg`. `game.gd` does what a choice means:
 
-- **The main menu is over the original's attract mode**, the machine
-  running with no inputs. Choosing a game restarts the machine and works
+- **The main menu is over a frame of the original's attract mode**, held
+  still: the machine is run there without sound (`MENU_FRAME`, a moment of
+  its demonstration race; about a second and a half, a few milliseconds a
+  drawn frame) and stopped, and the picture fades in. No HUD is shown
+  there. Choosing a game restarts the machine and works
   its inputs behind a black screen
   (`_starting_inputs`): a coin, start at the title, and for a single stage
   A through "how to play" and the name entry as well. It goes by the main
@@ -480,6 +500,12 @@ keeps them in `user://settings.cfg`. `game.gd` does what a choice means:
 - **Free continues**: a coin is put in when the continue screen appears.
 - **Pause** is the machine not being stepped. A button that is both pause
   and start (Start on a gamepad) pauses only while driving.
+- **An option changed while the game is stopped** (paused, or behind the
+  main menu) shows at once: the picture is made again from the game's
+  records as they are (`GameScene.regather`, which leaves the count of
+  what is shown in turn alone). A picture that has become wider or
+  narrower takes one frame of the game instead, without inputs, as the
+  game itself finds what more of the course is in sight.
 - **Music and effects volumes**: the driver plays music as long samples on
   the first sampled channel and effects on the last three (measured over
   6000 frames; the FM part made no sound at all there), so the two gains

@@ -55,6 +55,10 @@ const SHRINK_X: Array[int] = [
 const GROUND_RASTER := 0x296E2
 const GROUND_WIDTH_STEPS := 0x296F2
 const PARAM_SCALE := 1024.0
+## The game's curtain (game/wipe.gd) is closed when this many diagonals of
+## cells are covered from each of its two corners.
+const Wipe := preload("res://game/wipe.gd")
+const WIPE_DIAGONALS := 34.0
 
 var machine: RefCounted
 ## What the game asked for, to draw from instead of video RAM while the game
@@ -88,9 +92,13 @@ var _first_cut := 0
 var _cells_tex: ImageTexture
 var _fix_cart: ImageTexture
 var _fix_bios: ImageTexture
+var _fix_cart_pixels := PackedByteArray()
+var _fix_bios_pixels := PackedByteArray()
 var _solid_cart := PackedByteArray()
 var _solid_bios := PackedByteArray()
 var _mask_columns := Vector2i.ZERO
+## True if the text layer has cells of the game's curtain.
+var _curtain_drawn := false
 
 var _zoom_y := PackedByteArray()
 var _kept_columns: Array[PackedByteArray] = []
@@ -105,8 +113,6 @@ var _ground: ColorRect
 var _ground_material: ShaderMaterial
 var _bars: Array[ColorRect] = []
 var _sprites: Node2D
-var _front_window: Control
-var _front: Node2D
 var _fix: ColorRect
 var _sprite_material: ShaderMaterial
 var _fix_material: ShaderMaterial
@@ -119,8 +125,12 @@ func _ready() -> void:
 	var zoom_y := _texture(dir.path_join("zoom_y.bin"), 256, 256, Image.FORMAT_R8)
 	_fix_cart = _texture(dir.path_join("fix_cart.bin"), 512, 512, Image.FORMAT_R8)
 	_fix_bios = _texture(dir.path_join("fix_bios.bin"), 512, 512, Image.FORMAT_R8)
-	_solid_cart = _solid_tiles(FileAccess.get_file_as_bytes(dir.path_join("fix_cart.bin")))
-	_solid_bios = _solid_tiles(FileAccess.get_file_as_bytes(dir.path_join("fix_bios.bin")))
+	_fix_cart_pixels = FileAccess.get_file_as_bytes(dir.path_join("fix_cart.bin"))
+	_fix_bios_pixels = FileAccess.get_file_as_bytes(dir.path_join("fix_bios.bin"))
+	_fix_cart_pixels.resize(512 * 512)
+	_fix_bios_pixels.resize(512 * 512)
+	_solid_cart = _solid_tiles(_fix_cart_pixels)
+	_solid_bios = _solid_tiles(_fix_bios_pixels)
 
 	_palette_bytes.resize(16 * 256 * 4)
 	_palette_tex = ImageTexture.create_from_image(
@@ -175,15 +185,6 @@ func _ready() -> void:
 		add_child(bar)
 		_bars.append(bar)
 
-	_front_window = Control.new()
-	_front_window.clip_contents = true
-	_front_window.size = SCREEN
-	_front_window.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_front_window)
-	_front = Node2D.new()
-	_front.material = _sprite_material
-	_front_window.add_child(_front)
-
 	_fix_material = ShaderMaterial.new()
 	_fix_material.shader = preload("res://video/fix.gdshader")
 	_fix_material.set_shader_parameter("cells_tex", _cells_tex)
@@ -208,7 +209,6 @@ func _lay_out() -> void:
 	_ground.size = size
 	_ground_material.set_shader_parameter("view_size", size)
 	_sprites.position.x = left
-	_front_window.position.x = left
 	_fix.size = size
 	_fix_material.set_shader_parameter("view_size", size)
 	_fix_material.set_shader_parameter("margin", left)
@@ -274,25 +274,33 @@ func _build_colour_table() -> void:
 		_colours[word] = r | (g << 8) | (b << 16) | (0xFF << 24)
 
 
-## One quad for a sprite strip between two raster lines.
+## One quad for a sprite strip between two raster lines. `kept` is 1 to
+## leave out what of it is not within the hardware's picture.
 func _add_strip(points: PackedVector2Array, colours: PackedColorArray, uvs: PackedVector2Array,
 		indices: PackedInt32Array, sprite: int, left: int, from_line: int, to_line: int,
-		top: int, shrink_y: int, rows: int, shrink_x: int, seen_through := 0) -> void:
+		top: int, shrink_y: int, rows: int, shrink_x: int, seen_through := 0, mirrored := 0, kept := 0) -> void:
 	if to_line <= from_line or rows == 0:
 		return
 	var first := points.size()
 	var y0 := from_line - FIRST_LINE
 	var y1 := to_line - FIRST_LINE
-	points.append(Vector2(left, y0))
-	points.append(Vector2(left + 16, y0))
-	points.append(Vector2(left + 16, y1))
-	points.append(Vector2(left, y1))
-	uvs.append(Vector2(0, from_line))
-	uvs.append(Vector2(16, from_line))
-	uvs.append(Vector2(16, to_line))
-	uvs.append(Vector2(0, to_line))
+	var x0 := left
+	var x1 := left + 16
+	if kept:
+		x0 = maxi(x0, 0)
+		x1 = mini(x1, int(SCREEN.x))
+		if x1 <= x0:
+			return
+	points.append(Vector2(x0, y0))
+	points.append(Vector2(x1, y0))
+	points.append(Vector2(x1, y1))
+	points.append(Vector2(x0, y1))
+	uvs.append(Vector2(x0 - left, from_line))
+	uvs.append(Vector2(x1 - left, from_line))
+	uvs.append(Vector2(x1 - left, to_line))
+	uvs.append(Vector2(x0 - left, to_line))
 	var params := Color(sprite / PARAM_SCALE, top / PARAM_SCALE, shrink_y / PARAM_SCALE,
-			(rows + shrink_x * 64 + seen_through * 1024) / PARAM_SCALE)
+			(rows + shrink_x * 64 + seen_through * 1024 + mirrored * 2048) / PARAM_SCALE)
 	for corner in 4:
 		colours.append(params)
 	indices.append_array([first, first + 1, first + 2, first, first + 2, first + 3])
@@ -416,8 +424,9 @@ func over_line_limit() -> bool:
 	return not _last_on_line.is_empty()
 
 
-## Rebuilds everything from the machine's current state.
-func refresh() -> void:
+## Rebuilds everything from the machine's current state. `again` is for a
+## picture of the same frame of the game as the last, drawn another way.
+func refresh(again := false) -> void:
 	var palette: PackedInt32Array = machine.palette
 	var bank: int = machine.palette_bank * 0x1000
 	for i in 0x1000:
@@ -434,26 +443,51 @@ func refresh() -> void:
 	var racing := from_scene and scene.in_race and scene.ground_on
 	if scene != null:
 		scene.hud_hidden = own_hud
+		if again:
+			scene.regather()
 	var covered := _draw_text(own_hud and racing)
 	hud_shown = racing and not covered
 	var in_race := from_scene and scene.in_race and scene.ground_on and view_width > int(SCREEN.x)
+	var wipe := _wipe_closed() if from_scene and view_width > int(SCREEN.x) else -1.0
 	# the HUD goes to the picture's edges, but not while the game is
-	# blacking the screen out with the same layer
-	var spread := margin() if in_race and not covered else 0
+	# blacking the screen out with the same layer's cells
+	var spread := margin() if in_race and (not covered or wipe >= 0.0) else 0
 	# what video RAM has is the hardware's 320 pixels and no more
 	var filled := from_scene
 	if from_scene:
 		_draw_scene(spread)
 	else:
 		_ground.visible = false
-		RenderingServer.canvas_item_clear(_front.get_canvas_item())
 		_draw_video_ram()
 	for bar in _bars:
 		bar.visible = not filled
 	_fix_material.set_shader_parameter("open_sides",
 			_mask_columns * 8 if filled and view_width > int(SCREEN.x) else Vector2i.ZERO)
-	_fix_material.set_shader_parameter("cover_sides", filled)
+	_fix_material.set_shader_parameter("cover_sides", filled and wipe < 0.0)
+	_fix_material.set_shader_parameter("wipe", wipe)
+	if wipe >= 0.0:
+		var pixels := _fix_cart_pixels if machine.fix_from_cart else _fix_bios_pixels
+		var tile := Wipe.COVER & 0xFFF
+		var colour := pixels[(tile >> 6) * 8 * 512 + (tile & 63) * 8] + (Wipe.COVER >> 12) * 16
+		_fix_material.set_shader_parameter("wipe_colour", Color8(_palette_bytes[colour * 4],
+				_palette_bytes[colour * 4 + 1], _palette_bytes[colour * 4 + 2]))
 	_fix_material.set_shader_parameter("spread", spread)
+
+
+## How far the game's curtain is closed while it moves, from 0 to 1, or -1
+## when it is still. A picture wider than the hardware's has it drawn from
+## corner to corner of the picture instead of in the text layer's cells,
+## and moving between the game's steps.
+func _wipe_closed() -> float:
+	var ram: PackedByteArray = machine.ram
+	# a curtain the game has left half way is no longer in the text layer
+	if ram.decode_u16(Wipe.RUNNING & 0xFFFF) == 0 or not _curtain_drawn:
+		return -1.0
+	var between := float(ram.decode_u16(Wipe.FRAMES_A_STEP & 0xFFFF))
+	var stepped := (between - ram.decode_u16(Wipe.FRAMES_TO_STEP & 0xFFFF)) / (between + 1.0)
+	if ram.decode_u16(Wipe.OPENING & 0xFFFF) & 1:
+		stepped = -stepped
+	return clampf((ram.decode_u16(Wipe.DIAGONAL & 0xFFFF) + stepped) / WIPE_DIAGONALS, 0.0, 1.0)
 
 
 ## The sprites as video RAM has them.
@@ -554,9 +588,12 @@ func _draw_text(without_hud := false) -> bool:
 		if not text_changes.has(change.y):
 			text_changes[change.y] = []
 		text_changes[change.y].append(change)
+	_curtain_drawn = false
 	for cell in 40 * 32:
 		var address := 0x7000 + (cell % 40) * 32 + cell / 40
 		var word := vram[address]
+		if word == Wipe.COVER or word == Wipe.EDGES[0] or word == Wipe.EDGES[1]:
+			_curtain_drawn = true
 		var out := (cell / 40 * CELLS_WIDTH + cell % 40) * 4
 		var split := 0
 		if text_changes.has(address):
@@ -615,9 +652,9 @@ func _draw_text(without_hud := false) -> bool:
 func _draw_scene(spread: int) -> void:
 	_last_on_line.clear()
 	# A race is drawn as wide as the picture is. Of other screens only the
-	# backdrop is, over and over; the rest is kept to the hardware's 320
-	# pixels, as screens put things just off the hardware's screen to hide
-	# them.
+	# backdrop is, over and over, and what the game says may be anywhere;
+	# the rest is kept to the hardware's 320 pixels, as screens put things
+	# just off the hardware's screen to hide them.
 	var open := scene.in_race
 	var backdrop := 0
 	if not scene.ground_on and view_width > int(SCREEN.x) and scene.backdrop_period > 0:
@@ -626,46 +663,60 @@ func _draw_scene(spread: int) -> void:
 	var right := int(SCREEN.x) - left
 	var bottom := FIRST_LINE + int(SCREEN.y)
 	var strips := scene.strips
-	var points: Array[PackedVector2Array] = [PackedVector2Array(), PackedVector2Array()]
-	var colours: Array[PackedColorArray] = [PackedColorArray(), PackedColorArray()]
-	var uvs: Array[PackedVector2Array] = [PackedVector2Array(), PackedVector2Array()]
-	var indices: Array[PackedInt32Array] = [PackedInt32Array(), PackedInt32Array()]
+	var points := PackedVector2Array()
+	var colours := PackedColorArray()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
 	var count := mini(strips.size() / GameScene.STRIP_FIELDS, STRIP_ROWS)
+	# A backdrop made to scroll by comes round, and is wider than the screen.
+	# One just as wide as the screen is a picture whose sides do not match:
+	# every other time it is drawn the other way round, so that they do.
+	var period := scene.backdrop_period
+	var mirrored := period == int(SCREEN.x)
+	var backdrop_left := 0
+	for strip in backdrop:
+		backdrop_left = mini(backdrop_left, strips[strip * GameScene.STRIP_FIELDS])
 	for strip in count:
 		var at := strip * GameScene.STRIP_FIELDS
-		var x := strips[at] + strips[at + 5] * spread
+		var x := strips[at]
 		var top := strips[at + 1]
 		var rows := strips[at + 2]
+		var where := strips[at + 5]
 		var first_line := maxi(top, FIRST_LINE)
 		var last_line := mini(top + rows * 16, bottom)
 		if strip < backdrop:
-			var period := scene.backdrop_period
-			x -= (ceili(float(x + 16 - left) / period) - 1) * period
-			while x < right:
-				_add_strip(points[0], colours[0], uvs[0], indices[0], strip, x, first_line, last_line,
-						top & 0x1FF, strips[at + 4], rows, strips[at + 3])
-				x += period
+			var time := floori(float(left - backdrop_left) / period)
+			while backdrop_left + time * period < right:
+				var turned := 1 if mirrored and time & 1 else 0
+				var from := x - backdrop_left
+				if turned:
+					from = period - from - strips[at + 3] - 1
+				_add_strip(points, colours, uvs, indices, strip, backdrop_left + time * period + from,
+						first_line, last_line, top & 0x1FF, strips[at + 4], rows, strips[at + 3], 0, turned)
+				time += 1
 			continue
-		var to := 0
-		if not open:
-			to = 1
+		if where == GameScene.AT_RIGHT:
+			x += spread
+		var kept := 0
+		if not open and where != GameScene.ANYWHERE:
+			kept = 1
 			# as on the hardware, which counts across in nine bits: some
 			# screens rely on a row of columns coming round on the left
 			x &= 0x1FF
 			if x > 0x1F0:
 				x -= 0x200
-			if x >= int(SCREEN.x):
-				continue
 		if x >= right or x + 16 <= left:
 			continue
-		_add_strip(points[to], colours[to], uvs[to], indices[to], strip, x, first_line, last_line,
-				top & 0x1FF, strips[at + 4], rows, strips[at + 3], strips[at + 6])
+		_add_strip(points, colours, uvs, indices, strip, x, first_line, last_line,
+				top & 0x1FF, strips[at + 4], rows, strips[at + 3], strips[at + 6], 0, kept)
 	var bytes := scene.strip_tiles.slice(0, count * GameScene.STRIP_BYTES)
 	bytes.resize(_strip_bytes.size())
 	_strips_tex.update(Image.create_from_data(
 			STRIP_TILES, STRIP_ROWS, false, Image.FORMAT_RGBA8, bytes))
-	_show_strips(_sprites, points[0], colours[0], uvs[0], indices[0])
-	_show_strips(_front, points[1], colours[1], uvs[1], indices[1])
+	var item := _sprites.get_canvas_item()
+	RenderingServer.canvas_item_clear(item)
+	if not indices.is_empty():
+		RenderingServer.canvas_item_add_triangle_array(item, indices, points, colours, uvs)
 
 	_ground.visible = scene.ground_on and scene.zoom.x >= 0x10
 	if _ground.visible:
@@ -675,14 +726,6 @@ func _draw_scene(spread: int) -> void:
 			_repeat_ground()
 		_ground_material.set_shader_parameter("auto_anim", machine.auto_anim_counter)
 		_ground_material.set_shader_parameter("auto_anim_enabled", (machine.lspc_mode & 8) == 0)
-
-
-func _show_strips(on: Node2D, points: PackedVector2Array, colours: PackedColorArray,
-		uvs: PackedVector2Array, indices: PackedInt32Array) -> void:
-	var item := on.get_canvas_item()
-	RenderingServer.canvas_item_clear(item)
-	if not indices.is_empty():
-		RenderingServer.canvas_item_add_triangle_array(item, indices, points, colours, uvs)
 
 
 ## Makes the textures of the course's map when the course has changed: the

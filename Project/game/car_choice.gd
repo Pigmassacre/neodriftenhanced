@@ -2,6 +2,9 @@ extends GameRoutines
 ## The screen where the player chooses one of three cars: the cars slide
 ## past with the joystick, a clock counts 20 seconds down, and button A (or
 ## the clock) settles it.
+##
+## In a picture wider than the original's (the machine's `view_margin`) the
+## cars come and go across all of it: see `_widen`.
 
 const Sprite := preload("res://game/sprite_object.gd")
 const Palettes := preload("res://game/palettes.gd")
@@ -94,6 +97,11 @@ const CLEAR_TEXT := 0xA26
 
 enum {FADING_IN, CAR_ARRIVING, CHOOSING, TO_PREVIOUS, TO_NEXT, CHOSEN, FADING_OUT, DONE}
 
+## For a wider picture: six more sprite objects, for the car that leaves
+## while another comes (the original needs none: it has one half of each
+## on screen at a time at most).
+var _leaving: Array[int] = []
+
 
 func routines() -> Dictionary:
 	return {
@@ -159,6 +167,7 @@ func forget_choice() -> void:
 func set_up() -> void:
 	m.call_routine(CLEAR_TEXT)
 	m.call_routine(CLEAR_SPRITES)
+	_leaving.clear()
 	(sibling(Palettes) as Palettes).choose_shades(0)
 	_fade(0)
 	set32(BACKDROP_X, -(PIECE_WIDTH << 16))
@@ -194,6 +203,8 @@ func update() -> void:
 		CHOSEN: chosen()
 		FADING_OUT: fading_out()
 		DONE: done()
+	if m.view_margin > 0:
+		_widen()
 	m.call_routine(BUILD_SPRITES)
 
 
@@ -282,6 +293,12 @@ func take_sprites() -> void:
 func free_sprites() -> void:
 	for index in SPRITE_COUNT:
 		Sprite.free_record(m, _sprite(index))
+	for sprite in _leaving:
+		Sprite.free_record(m, sprite)
+		m.open_records.erase(sprite & 0xFFFF)
+	_leaving.clear()
+	for part in 6:
+		m.open_records.erase(u32(LEFT_PARTS + part * 4) & 0xFFFF)
 
 
 ## $15E22
@@ -433,18 +450,79 @@ func _show_right(car: int) -> void:
 
 ## $164B0
 func _show_body(sprite: int, parts: int, car: int) -> void:
+	_show_body_at(sprite, parts, car, u16(CAR_X))
+
+
+func _show_body_at(sprite: int, parts: int, car: int, x: int) -> void:
 	var entry := parts + wrap16(car << 3)
 	Sprite.picture(m, sprite, _picture(m.r16(entry)))
-	Sprite.place(m, sprite, u16(CAR_X) + m.r16(entry + 2), m.r16(entry + 4) - (1 if u8(BOB) != 0 else 0))
+	Sprite.place(m, sprite, x + m.r16(entry + 2), m.r16(entry + 4) - (1 if u8(BOB) != 0 else 0))
 	set16(sprite + Sprite.DEPTH, m.r16(entry + 6))
 
 
 ## $164FC
 func _show_animated(sprite: int, parts: int, car: int) -> void:
+	_show_animated_at(sprite, parts, car, u16(CAR_X))
+
+
+func _show_animated_at(sprite: int, parts: int, car: int, x: int) -> void:
 	var entry := parts + wrap16(car * 40) + u8(PICTURE) * 10
 	Sprite.picture(m, sprite, _picture(m.r16(entry)))
-	Sprite.place(m, sprite, u16(CAR_X) + m.r16(entry + 2), m.r16(entry + 4))
+	Sprite.place(m, sprite, x + m.r16(entry + 2), m.r16(entry + 4))
 	set16(sprite + Sprite.DEPTH, m.r16(entry + 6))
+
+
+## The six sprites in `sprites` as all of `car`, its left edge at `x`.
+func _show_whole_car(sprites: Array[int], car: int, x: int) -> void:
+	_show_body_at(sprites[0], LEFT_BODY[0], car, x)
+	_show_body_at(sprites[1], LEFT_BODY[1], car, x)
+	_show_animated_at(sprites[2], LEFT_ANIMATED, car, x)
+	_show_body_at(sprites[3], RIGHT_BODY[0], car, x)
+	_show_body_at(sprites[4], RIGHT_BODY[1], car, x)
+	_show_animated_at(sprites[5], RIGHT_ANIMATED, car, x)
+	for sprite in sprites:
+		Sprite.show(m, sprite, true)
+		m.open_records[sprite & 0xFFFF] = true
+
+
+## After a frame of the screen, for a wider picture: the cars are drawn
+## wherever they are, not only within the original's 320 pixels. The
+## original has a car come from just right of its picture, and has two
+## slide by 512 pixels, which is where its hardware starts counting across
+## again: the car that leaves on one side is the one that comes on the
+## other. Here they come from the edge of the wider picture, and slide as
+## much further as it is wider, in the same number of frames; the car that
+## leaves has sprites of its own.
+func _widen() -> void:
+	var state := u8(STATE)
+	if state == DONE:
+		return
+	var car_sprites: Array[int] = []
+	for part in 6:
+		car_sprites.append(u32(LEFT_PARTS + part * 4))
+		m.open_records[car_sprites[part] & 0xFFFF] = true
+	var sliding := state == TO_PREVIOUS or state == TO_NEXT
+	if not sliding:
+		for sprite in _leaving:
+			Sprite.show(m, sprite, false)
+	if state == CAR_ARRIVING:
+		var way_to_go := CAR_X_OFF_SCREEN - CAR_X_AT_REST
+		_show_whole_car(car_sprites, u16(CAR),
+				CAR_X_AT_REST + (u16(CAR_X) - CAR_X_AT_REST) * (way_to_go + m.view_margin) / way_to_go)
+	elif sliding:
+		if _leaving.is_empty():
+			for part in 6:
+				_leaving.append(Sprite.take_record(m))
+			if _leaving.has(0):
+				# no records left: as the original has it
+				_leaving.clear()
+				return
+		var way := 1 if state == TO_PREVIOUS else -1
+		var slide_width := SLIDE + m.view_margin * 2
+		var gone := (SLIDE - s16(SLIDE_LEFT)) * slide_width / SLIDE
+		var car := u16(CAR)
+		_show_whole_car(_leaving, posmod(car + way, CAR_COUNT), CAR_X_AT_REST + way * gone)
+		_show_whole_car(car_sprites, car, CAR_X_AT_REST + way * (gone - slide_width))
 
 
 ## $16554: every other frame the car is a pixel lower.

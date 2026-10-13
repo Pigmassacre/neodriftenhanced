@@ -7,8 +7,8 @@ extends Node2D
 ## in the middle of the window. What is drawn over it (hud/) is drawn at the
 ## window's resolution.
 ##
-## It starts with the main menu (menu/menu.gd) over the original's attract
-## mode. A game chosen there is started by restarting the machine and
+## It starts with the main menu (menu/menu.gd) over a frame of the
+## original's attract mode, held still. A game chosen there is started by restarting the machine and
 ## working its coin slot and buttons until the game is under way; the game
 ## over, or left from the menu of a paused game, the machine is restarted
 ## again for the menu. Any option of the "automated" kind below leaves the
@@ -88,6 +88,12 @@ const PRESS_EVERY := 8
 const COIN_FRAMES := 6
 const COIN_EVERY := 40
 const START_FRAMES := 900
+## The main menu is over a frame of the attract mode's race, held still:
+## which frame, how long a drawn frame may be spent getting there, and how
+## many drawn frames the picture takes to appear.
+const MENU_FRAME := 3960
+const MENU_STEP_MS := 9.0
+const MENU_FADE_TICKS := 24.0
 ## Drawn frames a key of --press is held for.
 const PRESS_TICKS := 3
 
@@ -149,6 +155,10 @@ var _hand_written := true
 var _program := false
 var _native_video := true
 var _keep_video_ram := false
+## Frames the machine has still to run to the picture the main menu is
+## over, and how much of that picture shows yet (0 to 1).
+var _menu_frames := 0
+var _menu_shown := 1.0
 ## The stage of a game of one stage alone, or -1.
 var _stage := -1
 var _start_frames := 0
@@ -292,7 +302,7 @@ func _ready() -> void:
 		if start_arcade or _stage >= 0:
 			_start_game(_stage)
 		else:
-			_state = IN_MENU
+			_enter_menu()
 			_menu.open(menu_page if menu_page != "" else "main")
 	_refresh()
 
@@ -366,9 +376,22 @@ func _apply_settings(section: String) -> void:
 				sound.set_volumes(_settings.music, _settings.effects)
 		"game":
 			_map.wanted = _settings.map
-			# a HUD of our own takes a picture drawn from the game's records
-			video.own_hud = _settings.hud != Settings.HUD_ORIGINAL and video.scene != null
 			_hud.wanted = _settings.hud == Settings.HUD_NEW and video.scene != null
+			_choose_hud()
+	if _is_held():
+		# nothing else will draw it anew
+		_refresh(true)
+
+
+## Whether the original's HUD is left out: for one of our own, which takes
+## a picture drawn from the game's records, and behind the main menu.
+func _choose_hud() -> void:
+	video.own_hud = (_settings.hud != Settings.HUD_ORIGINAL or _state == IN_MENU) and video.scene != null
+
+
+## Is the game stopped with its picture showing behind a menu?
+func _is_held() -> bool:
+	return _picture != null and (_state == PAUSED or (_state == IN_MENU and _menu_frames == 0))
 
 
 func _apply_window() -> void:
@@ -391,6 +414,8 @@ func _start_game(stage: int) -> void:
 		sound.reset_driver()
 		sound.muted = true
 	_state = STARTING
+	_choose_hud()
+	_picture.modulate = Color.WHITE
 	_start_frames = 0
 	_coin_frames = 0
 	_continuing = false
@@ -404,10 +429,37 @@ func _to_main_menu(page: String) -> void:
 	if sound != null:
 		sound.reset_driver()
 		sound.muted = not shot_frames.is_empty()
-	_state = IN_MENU
+	_enter_menu()
+	_refresh()
 	_menu.open("main")
 	if page != "main":
 		_menu.go(page)
+
+
+## The main menu: the machine, just started, is run to MENU_FRAME of its
+## attract mode without a sound and stopped there.
+func _enter_menu() -> void:
+	_state = IN_MENU
+	_menu_frames = MENU_FRAME
+	_menu_shown = 0.0
+	_picture.modulate = Color.BLACK
+	_choose_hud()
+
+
+## A drawn frame of the main menu: gets on towards the picture it is over,
+## and then lets that appear.
+func _run_to_menu_picture() -> void:
+	if _menu_frames == 0:
+		if _menu_shown < 1.0:
+			_menu_shown = minf(_menu_shown + 1.0 / MENU_FADE_TICKS, 1.0)
+			_picture.modulate = Color(_menu_shown, _menu_shown, _menu_shown)
+		return
+	var started := Time.get_ticks_msec()
+	while _menu_frames > 0 and not machine.halted and Time.get_ticks_msec() - started < MENU_STEP_MS:
+		_step()
+		_menu_frames -= 1
+	if _menu_frames == 0:
+		_refresh()
 
 
 func _pause() -> void:
@@ -417,6 +469,7 @@ func _pause() -> void:
 
 func _resume() -> void:
 	_state = PLAYING
+	_choose_hud()
 	_time = 0.0
 	_menu.close()
 
@@ -453,6 +506,7 @@ func _starting_inputs() -> Array[int]:
 		done = true
 	if done or _start_frames > START_FRAMES:
 		_state = PLAYING
+		_choose_hud()
 		_menu.close()
 		if sound != null:
 			sound.muted = not shot_frames.is_empty()
@@ -553,11 +607,13 @@ func _fit_view() -> void:
 		width = _forced_width
 	elif not _settings.wide:
 		width = int(NeoGeoVideo.SCREEN.x)
+	var width_before := video.view_width
 	video.view_width = mini(width, WIDEST_VIEW) & ~1
 	_screen.size = Vector2i(video.view_width, int(NeoGeoVideo.SCREEN.y))
 	_picture.size = (Vector2(_screen.size) * _pixel).round()
 	_picture.position = ((window - _picture.size) / 2).round()
 	_map.pixel = _pixel
+	_map.view_margin = video.margin()
 	_map.size = _picture.size
 	_hud.pixel = _pixel
 	_hud.size = _picture.size
@@ -567,6 +623,14 @@ func _fit_view() -> void:
 	if video.scene != null:
 		machine.view_margin = video.margin()
 	_show_crt()
+	if _is_held():
+		if video.view_width != width_before and not machine.halted:
+			# what a wider picture shows more of is the game's to find, and it
+			# does in a frame
+			_step()
+			_refresh()
+		else:
+			_refresh(true)
 
 
 func _show_crt() -> void:
@@ -707,6 +771,9 @@ func _process(delta: float) -> void:
 		return
 	if _state == PAUSED:
 		return
+	if _state == IN_MENU:
+		_run_to_menu_picture()
+		return
 	_time = minf(_time + delta, FRAME_TIME * 3)
 	var stepped := false
 	while _time >= FRAME_TIME and not machine.halted:
@@ -725,10 +792,13 @@ func _press(key: Key, pressed: bool) -> void:
 	Input.parse_input_event(event)
 
 
-func _refresh() -> void:
-	video.refresh()
-	_map.refresh(video.hud_shown)
-	_hud.refresh(video.hud_shown)
+## Draws the game's picture: after a frame of the game, or `again` for the
+## same frame drawn another way.
+func _refresh(again := false) -> void:
+	video.refresh(again)
+	var in_race := video.hud_shown and _state != IN_MENU
+	_map.refresh(in_race)
+	_hud.refresh(in_race)
 
 
 func _step() -> void:
@@ -757,7 +827,8 @@ func _step() -> void:
 				coin |= 1
 			else:
 				p1 |= P1_BITS[entry[0]]
-	if sound != null:
+	var silent := _state == IN_MENU
+	if sound != null and not silent:
 		# The sound CPU ran alongside the previous frame on a worker thread.
 		_finish_sound_task()
 		sound.play_rendered()
@@ -774,7 +845,7 @@ func _step() -> void:
 	var took := (Time.get_ticks_usec() - started) / 1000.0
 	_machine_ms += took
 	_machine_ms_peak = maxf(_machine_ms_peak, took)
-	if sound != null:
+	if sound != null and not silent:
 		# the sound CPU's clock is a third of the main CPU's
 		for index in machine.sound_log.size():
 			sound.command(machine.sound_log[index], machine.sound_log_times[index] / 3)

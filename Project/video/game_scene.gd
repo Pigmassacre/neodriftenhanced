@@ -78,10 +78,15 @@ const SYSTEM_MODE := 0xFD80
 const STRIP_TILES := 32
 const STRIP_BYTES := STRIP_TILES * 4
 ## Numbers kept for each strip in `strips`: x, top line, rows, the hardware's
-## shrink across (0-15) and down (0-255), 1 if it belongs at the right
-## edge of the picture however wide that is (0 where it is), and 1 if it
-## is to be seen through.
+## shrink across (0-15) and down (0-255), where it belongs (see below),
+## and 1 if it is to be seen through.
 const STRIP_FIELDS := 7
+## Where a strip belongs in a picture wider than the hardware's: where the
+## game put it, as far from the right edge as the game put it, or where the
+## game put it even if that is beyond the hardware's picture on a screen
+## that is otherwise kept to it (NeoGeoMachine.open_records).
+const AT_RIGHT := 1
+const ANYWHERE := 2
 ## Marks a record in the list of those shown as one to be seen through.
 const SEEN_THROUGH := 0x10000
 ## In a race, things drawn from this depth on are the HUD's, not the
@@ -139,9 +144,13 @@ var _pending_in_race := false
 var _pending_tiles := PackedByteArray()
 var _pending_ground: Array = []
 var _blank := PackedByteArray()
-## For every record, what its first word was one and two frames ago.
+## For every record, what its first word was one and two frames ago, and
+## whether it has been shown and hidden in turn.
 var _shown_before := PackedInt32Array()
 var _shown_earlier := PackedInt32Array()
+var _in_turn := PackedByteArray()
+## Where the pictures of the backdrop are, in the order of the records.
+var _backdrop_lefts := PackedInt32Array()
 
 
 func _init(for_machine: NeoGeoMachine) -> void:
@@ -215,11 +224,21 @@ func _take_sprites() -> void:
 	backdrop_period = _pending_backdrop.y
 
 
+## Makes the picture again from the records as they are, without a frame
+## of the game having gone by: for when what is drawn of them has changed.
+func regather() -> void:
+	if strips.is_empty() or not in_use():
+		return
+	_gather(false)
+	_take_sprites()
+
+
 func _clear_sprites() -> void:
 	_pending_strips = PackedInt32Array()
 	_pending_tiles = PackedByteArray()
 	_pending_backdrop = Vector2i.ZERO
 	_pending_in_race = false
+	machine.open_records.clear()
 	_take_sprites()
 
 
@@ -305,21 +324,25 @@ func _long(offset: int) -> int:
 
 ## The records that are shown, lowest depth first, with SEEN_THROUGH set
 ## for those shown and hidden in turn. Equal depths come out in the order
-## the original's sort leaves them in ($133A0).
-func _shown_in_order() -> PackedInt32Array:
+## the original's sort leaves them in ($133A0). `new_frame` is false when
+## the records were looked at before in this frame of the game.
+func _shown_in_order(new_frame := true) -> PackedInt32Array:
 	var ram := machine.ram
 	var records := PackedInt32Array()
 	var depths := PackedInt32Array()
 	var record_count := SpriteObject.record_count(machine)
 	_shown_before.resize(record_count)
 	_shown_earlier.resize(record_count)
+	_in_turn.resize(record_count)
 	for index in record_count:
 		var record := SpriteObject.record(index) & 0xFFFF
 		var shown := ram.decode_u16(record + SHOWN)
-		var before := _shown_before[index]
-		var in_turn := translucency and shown + before == 3 and before + _shown_earlier[index] == 3
-		_shown_earlier[index] = before
-		_shown_before[index] = shown
+		if new_frame:
+			var before := _shown_before[index]
+			_in_turn[index] = 1 if shown + before == 3 and before + _shown_earlier[index] == 3 else 0
+			_shown_earlier[index] = before
+			_shown_before[index] = shown
+		var in_turn := translucency and _in_turn[index] != 0
 		if shown == 1 or in_turn:
 			records.append(record | (SEEN_THROUGH if in_turn else 0))
 			depths.append(ram.decode_s16(record + DEPTH))
@@ -343,47 +366,62 @@ func _shown_in_order() -> PackedInt32Array:
 ## How many of `records`, from the first, make up a backdrop, and how many
 ## pixels across it is; zeros when there is none. They are the ones drawn
 ## first that are as high as the screen, at its top and not zoomed, if they
-## lie side by side from the screen's left edge to its right or beyond. The
-## hardware counts across in nine bits, and such a row comes round: what
-## starts right of the screen is the row's left end.
+## lie side by side from the screen's left edge to its right or beyond.
+## Where each is goes to `_backdrop_lefts`. The hardware counts across
+## in nine bits, so a row can come round: what is right of the screen may
+## be the row's left end.
 func _find_backdrop(records: PackedInt32Array) -> Vector2i:
 	var ram := machine.ram
+	_backdrop_lefts.clear()
 	if ram.decode_u16(GROUND_ON) != 0 or records.is_empty() or records[0] & SEEN_THROUGH:
 		return Vector2i.ZERO
 	var depth := ram.decode_s16(records[0] + DEPTH)
-	var spans: Array[Vector2i] = []
+	var row := PackedInt32Array()
 	for record in records:
 		if record & SEEN_THROUGH or ram.decode_s16(record + DEPTH) != depth or ram.decode_u16(record + ROWS) != BACKDROP_ROWS \
 				or (ram.decode_u16(record + Y) & 0x1FF) != 0 \
 				or ram.decode_u16(record + ZOOM_X) != 0x100 or ram.decode_u16(record + ZOOM_Y) != 0x100:
 			break
-		var left := _backdrop_left(record)
-		spans.append(Vector2i(left, left + ram.decode_u16(record + COLUMNS) * 16))
-	if spans.is_empty():
+		row.append(record)
+	if row.is_empty():
 		return Vector2i.ZERO
-	var count := spans.size()
-	spans.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.x < b.x)
-	for index in range(1, count):
-		if spans[index].x != spans[index - 1].y:
-			return Vector2i.ZERO
-	if spans[0].x > 0 or spans[-1].y < SCREEN_WIDTH:
-		return Vector2i.ZERO
-	return Vector2i(count, spans[-1].y - spans[0].x)
-
-
-func _backdrop_left(record: int) -> int:
-	var left := machine.ram.decode_u16(record + X) & 0x1FF
-	return left - 0x200 if left >= SCREEN_WIDTH else left
+	# the row from each of its pictures as its left end, at or left of the
+	# screen's edge; of those that hold together, the one that starts nearest
+	var best := Vector2i.ZERO
+	var best_start := 0
+	var lefts := PackedInt32Array()
+	lefts.resize(row.size())
+	for first in row.size():
+		var left := ram.decode_u16(row[first] + X) & 0x1FF
+		if left > 0:
+			left -= 0x200
+		var start := left
+		var at := first
+		var placed := 0
+		while at >= 0:
+			lefts[at] = left
+			placed += 1
+			left += ram.decode_u16(row[at] + COLUMNS) * 16
+			at = -1
+			if placed < row.size():
+				for other in row.size():
+					if other != first and (ram.decode_u16(row[other] + X) & 0x1FF) == (left & 0x1FF):
+						at = other
+		if placed == row.size() and left >= SCREEN_WIDTH and (best == Vector2i.ZERO or start > best_start):
+			best_start = start
+			best = Vector2i(row.size(), left - start)
+			_backdrop_lefts = lefts.duplicate()
+	return best
 
 
 ## Makes the strips of everything shown, as $1229E makes hardware sprites.
-func _gather() -> void:
+func _gather(new_frame := true) -> void:
 	var ram := machine.ram
 	var rom := machine.rom
 	var made := PackedInt32Array()
 	var tiles := PackedByteArray()
 	var columns_left := HARDWARE_COLUMNS
-	var records := _shown_in_order()
+	var records := _shown_in_order(new_frame)
 	var backdrop := _find_backdrop(records)
 	var backdrop_records := backdrop.x
 	var race := false
@@ -408,7 +446,7 @@ func _gather() -> void:
 		var rows := mini(ram.decode_u16(record + ROWS), STRIP_TILES)
 		var x := ram.decode_s16(record + X)
 		if index < backdrop_records:
-			x = _backdrop_left(record)
+			x = _backdrop_lefts[index]
 		# the hardware counts lines in nine bits; 240 on are above the picture
 		var top := ram.decode_u16(record + Y) & 0x1FF
 		if top >= 240:
@@ -419,7 +457,9 @@ func _gather() -> void:
 		var side := 0
 		if race and ram.decode_s16(record + DEPTH) >= HUD_DEPTH:
 			if x >= HUD_RIGHT_START:
-				side = 1
+				side = AT_RIGHT
+		elif machine.open_records.has(record):
+			side = ANYWHERE
 		var body := _long(record + PICTURE_BODY) & 0xFFFFFF
 		var source := rom
 		if body >= 0x100000 and body < 0x200000:

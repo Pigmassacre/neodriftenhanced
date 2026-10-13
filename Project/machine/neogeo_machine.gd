@@ -124,6 +124,11 @@ var irq2_pending := false
 ## (see NeoGeoVideo.view_width). The hand-written game routines that test
 ## whether something is in sight allow for it; 0 is the original.
 var view_margin := 0
+## The object records (game/sprite_object.gd, by the low word of their
+## address) that are to be drawn where they are on a screen that is
+## otherwise kept to the hardware's 320 pixels: what the hand-written game
+## moves across a wider picture.
+var open_records := {}
 ## True gives the game more room than the original's tables have, which a
 ## wide picture needs: more things on the course at a time
 ## (game/course_objects.gd) and more things drawn (game/sprite_object.gd).

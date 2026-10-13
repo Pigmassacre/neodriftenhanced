@@ -25,15 +25,19 @@ void vertex() {
 
 void fragment() {
 	// params: sprite index, top line, vertical shrink, rows + 64 * horizontal shrink
-	// + 1024 if it is to be seen through (all / 1024)
+	// + 1024 if it is to be seen through + 2048 if it is drawn the other way
+	// round (all / 1024)
 	int sprite = int(round(params.r * 1024.0));
 	int top = int(round(params.g * 1024.0));
 	int shrink_y = int(round(params.b * 1024.0));
 	int packed = int(round(params.a * 1024.0));
 	int rows = packed & 63;
 	int shrink_x = (packed >> 6) & 15;
-	bool seen_through = packed >= 1024;
+	bool seen_through = (packed & 1024) != 0;
 	int offset = int(floor(UV.x));
+	if (packed >= 2048) {
+		offset = shrink_x - offset;
+	}
 	int line = int(floor(UV.y));
 
 	int sprite_line = (line - top) & 0x1ff;

@@ -22,9 +22,15 @@ const Ground := preload("res://game/ground.gd")
 const PLAYER_CAR := 0x101508
 const RIVALS_PRESENT := 0x101222
 const COURSES := 7
-## Where the map is in the picture and how large, in game pixels: at the
-## left, between the time taken and the speed.
-const PLACE := Rect2(5, 42, 50, 112)
+## Where the map is in the picture and how large it may be, in game pixels:
+## at the left, between the time taken and the speed. It is as large as
+## fits there in the course's own shape, so a course that goes sideways as
+## much as up needs the width, and gets more of it in a picture wider than
+## the original's: WIDER for each pixel of the picture's margin, up to
+## WIDEST.
+const PLACE := Rect2(5, 42, 64, 112)
+const WIDER := 0.6
+const WIDEST := 150.0
 const INSET := 4.0
 const PANEL := Color(0.02, 0.03, 0.08, 0.45)
 const ROAD := Color(1, 1, 1)
@@ -72,6 +78,9 @@ const TRAIL_STEP := 48.0
 var machine: NeoGeoMachine
 ## Screen pixels to a game pixel.
 var pixel := 4.0
+## How far the original's picture is from the left edge of the one shown,
+## in game pixels.
+var view_margin := 0
 ## False hides the map whatever the game shows.
 var wanted := true
 ## False shows it at once, not over FADE_FRAMES calls of `refresh`.
@@ -151,6 +160,7 @@ func _begin() -> void:
 		"cell_map": machine.r32(Ground.CELL_MAP),
 		"cell_blocks": machine.r32(Ground.CELL_BLOCKS),
 		"start": _car_place(PLAYER_CAR, Car.X, Car.Y),
+		"room": _most_room(),
 	}
 	if course.across <= 0 or course.down <= 0:
 		return
@@ -161,6 +171,11 @@ func _begin() -> void:
 		WorkerThreadPool.wait_for_task_completion(_task)
 		_task = -1
 		_take()
+
+
+## The most room the map may take, in game pixels.
+func _most_room() -> Vector2:
+	return Vector2(minf(PLACE.size.x + view_margin * WIDER, WIDEST), PLACE.size.y)
 
 
 func _take() -> void:
@@ -273,7 +288,8 @@ func _make(course: Dictionary) -> void:
 		if ys[index] >= top and kinds[reached[index]] != ROADSIDE:
 			bounds = bounds.expand(Vector2i(xs[index], ys[index]))
 	# a picture PICTURE_DETAIL times as fine as the map is in game pixels
-	var room := (PLACE.size - Vector2.ONE * INSET * 2) * PICTURE_DETAIL
+	var most: Vector2 = course.room
+	var room := (most - Vector2.ONE * INSET * 2) * PICTURE_DETAIL
 	var scale := maxf(maxf(bounds.size.x * CODE / room.x, bounds.size.y * CODE / room.y), CODE)
 	var widen := maxi(ceili((LEAST_ROAD * PICTURE_DETAIL - ROAD_WIDTH / scale) / 2), 0)
 	var margin := widen + 1
@@ -423,16 +439,18 @@ func _distance_to_route(route: PackedVector2Array, at: Vector2) -> float:
 func _draw() -> void:
 	if _road == null:
 		return
-	var box := Rect2(PLACE.position * pixel, PLACE.size * pixel)
+	# as large as the room allows, and a panel no larger than the map
+	var most := (_most_room() - Vector2.ONE * INSET * 2) * pixel
+	var size := Vector2(_road.get_size()) * _scale
+	var fit := minf(most.x / size.x, most.y / size.y)
+	var box := Rect2(PLACE.position * pixel, size * fit + Vector2.ONE * INSET * 2 * pixel)
 	var panel := StyleBoxFlat.new()
 	panel.bg_color = PANEL
 	panel.set_corner_radius_all(int(3 * pixel))
 	panel.anti_aliasing = true
 	draw_style_box(panel, box)
 	var room := box.grow(-INSET * pixel)
-	var size := Vector2(_road.get_size()) * _scale
-	var fit := minf(room.size.x / size.x, room.size.y / size.y)
-	var corner := room.get_center() - size * fit / 2
+	var corner := room.position
 	var place := Rect2(corner, size * fit)
 	var on_screen := func(at: Vector2) -> Vector2: return corner + (at - _origin) * fit
 	var width := maxf(pixel * 0.7, 1.5)

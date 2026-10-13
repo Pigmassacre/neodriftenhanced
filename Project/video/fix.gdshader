@@ -23,6 +23,15 @@ uniform ivec2 open_sides = ivec2(0);
 // Covers the picture beyond the layer (and the columns left out) with the
 // tiles cells_tex has for it.
 uniform bool cover_sides = false;
+// How far the game's curtain is closed, from 0 to 1, or less than 0 when it
+// is not moving. It is then drawn in wipe_colour from two corners of the
+// picture towards the line between the other two, and the cells the game
+// draws it with (wipe_cells: tile numbers, all of palette wipe_palette) are
+// left out.
+uniform float wipe = -1.0;
+uniform vec3 wipe_colour = vec3(0.0);
+uniform ivec3 wipe_cells = ivec3(0x020, 0x37F, 0x37B);
+uniform int wipe_palette = 4;
 // How far the columns left of the HUD's left end are moved left and those
 // from HUD_RIGHT_START on are moved right.
 uniform int spread = 0;
@@ -42,6 +51,10 @@ const int HUD_RIGHT_START = 26;
 // The colour number and the palette of a cell's tile at a pixel of it.
 ivec2 tile_pixel(ivec4 cell, ivec2 pixel) {
 	int tile = cell.r | (cell.g << 8);
+	if (wipe >= 0.0 && cell.b == wipe_palette
+			&& (tile == wipe_cells.x || tile == wipe_cells.y || tile == wipe_cells.z)) {
+		return ivec2(0);
+	}
 	ivec2 atlas = ivec2(tile & 63, tile >> 6) * 8 + (pixel & ivec2(7));
 	return ivec2(int(round(texelFetch(fix_tex, atlas, 0).r * 255.0)), cell.b);
 }
@@ -61,6 +74,8 @@ ivec2 text_pixel(int x, int y) {
 
 void fragment() {
 	ivec2 pixel = ivec2(floor(UV * view_size));
+	vec2 across = (vec2(pixel) + 0.5) / view_size;
+	bool curtain = wipe >= 0.0 && min(across.x + across.y, 2.0 - across.x - across.y) < wipe;
 	int x = pixel.x - margin;
 	int row = (pixel.y >> 3) + FIRST_ROW;
 	int first = open_sides.x;
@@ -85,8 +100,11 @@ void fragment() {
 			found = tile_pixel(cell, ivec2(0));
 		}
 	}
-	if (found.x == 0) {
+	if (curtain) {
+		COLOR = vec4(wipe_colour, 1.0);
+	} else if (found.x == 0) {
 		discard;
+	} else {
+		COLOR = vec4(texelFetch(pal_tex, ivec2(found.x, found.y), 0).rgb, 1.0);
 	}
-	COLOR = vec4(texelFetch(pal_tex, ivec2(found.x, found.y), 0).rgb, 1.0);
 }
