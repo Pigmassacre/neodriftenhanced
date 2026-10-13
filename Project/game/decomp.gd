@@ -32,13 +32,13 @@ const GROUPS: Array[GDScript] = [
 	preload("res://game/demo_race.gd"),
 	preload("res://game/heap.gd"),
 	preload("res://game/game_over_screen.gd"),
-	# not yet checked against the original: preload("res://game/course_introduction.gd"),
-	# not yet checked against the original: preload("res://game/congratulations.gd"),
-	# not yet checked against the original: preload("res://game/name_entry.gd"),
-	# not yet checked against the original: preload("res://game/attract.gd"),
-	# not yet checked against the original: preload("res://game/car_showcase.gd"),
-	# not yet checked against the original: preload("res://game/best_times_screen.gd"),
-	# not yet checked against the original: preload("res://game/how_to_play.gd"),
+	preload("res://game/course_introduction.gd"),
+	preload("res://game/congratulations.gd"),
+	preload("res://game/name_entry.gd"),
+	preload("res://game/attract.gd"),
+	preload("res://game/car_showcase.gd"),
+	preload("res://game/best_times_screen.gd"),
+	preload("res://game/how_to_play.gd"),
 ]
 
 

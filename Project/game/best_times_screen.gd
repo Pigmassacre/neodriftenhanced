@@ -83,7 +83,7 @@ func scratch() -> Dictionary:
 		table[address] = free
 	for address: int in [0x5CD2, 0x5CF8, 0x5D16, 0x5D3A, 0x5D6C, 0x5DE8, 0x5E9E, 0x5EFA]:
 		table[address] = ["ccr"]
-	table[0x5DA2] = ["d1", "d2", "d3", "d4", "d7", "a0", "a1", "ccr"]
+	table[0x5DA2] = ["d0", "d1", "d2", "d3", "d4", "d7", "a0", "a1", "ccr"]
 	return table
 
 
