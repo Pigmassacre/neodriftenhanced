@@ -7,13 +7,32 @@ extends Node2D
 ## in the middle of the window. What is drawn over it (hud/) is drawn at the
 ## window's resolution.
 ##
-## Keys: arrows steer/select, Z X C V are buttons A B C D, 1 is start, 5 inserts a coin.
-## F2 turns the picture-tube look on and off, M the map, F11 full screen.
-## Gamepad: stick or pad steers, the four buttons are A B C D (A below, B
-## right, C left, D above), the right and left triggers are A and B too,
-## Start is start and Back inserts a coin.
+## It starts with the main menu (menu/menu.gd) over the original's attract
+## mode. A game chosen there is started by restarting the machine and
+## working its coin slot and buttons until the game is under way; the game
+## over, or left from the menu of a paused game, the machine is restarted
+## again for the menu. Any option of the "automated" kind below leaves the
+## menus out and the machine to its inputs, as on the original hardware.
 ##
-## Options after `--`:
+## The keys and buttons are the player's to choose (settings.gd). At first:
+## arrows steer/select, Z X C V are buttons A B C D, 1 is start, 5 inserts a
+## coin and Esc pauses. On a gamepad, stick or pad steers, the four buttons
+## are A B C D (A below, B right, C left, D above), the right and left
+## triggers are A and B too, Start is start (and pauses a race) and Back
+## inserts a coin. F2 turns the picture-tube look on and off, M the map,
+## F11 full screen.
+##
+## Options after `--` (automated: --snapshot, --input, --seedlog, --shot-frame,
+## --frames, --compare-views and --no-menu):
+##   --no-menu                  no menus, and none of the player's stored options
+##   --menu=PAGE                the menu open at that page even when automated
+##   --arcade, --stage=N        start a game as the menu would: the whole game, or
+##                              stage N alone (0 is the practice stage)
+##   --settings=PATH            keep the player's options in that file instead
+##   --press=TICK:KEY[,...]     press a key (by its name, as "Down" or "Enter") at that
+##                              count of drawn frames, to try the menus out
+##   --shot-tick=N              with --shot, one screenshot of the window at that count
+##                              of drawn frames, then quit
 ##   --snapshot=PATH            machine state to start from (default data/game/start.snapshot)
 ##   --input=FIELD:FIRST-LAST   scripted input for frames FIRST..LAST (as tools/replay.gd)
 ##   --topup=OFFSET:BELOW:VALUE keeps a work RAM word topped up (as tools/replay.gd)
@@ -43,17 +62,28 @@ const FRAME_TIME := 1.0 / 59.185606
 ## The widest picture drawn: what the game keeps of the course around the
 ## camera is not made for more (about 2.85 to 1).
 const WIDEST_VIEW := 640
-const P1_KEYS := {
-	KEY_UP: 1, KEY_DOWN: 2, KEY_LEFT: 4, KEY_RIGHT: 8, KEY_Z: 16, KEY_X: 32, KEY_C: 64, KEY_V: 128,
-}
 const P1_BITS := {"up": 1, "down": 2, "left": 4, "right": 8, "a": 16, "b": 32, "c": 64, "d": 128}
-const P1_PAD_BUTTONS := {
-	JOY_BUTTON_DPAD_UP: 1, JOY_BUTTON_DPAD_DOWN: 2, JOY_BUTTON_DPAD_LEFT: 4, JOY_BUTTON_DPAD_RIGHT: 8,
-	JOY_BUTTON_A: 16, JOY_BUTTON_B: 32, JOY_BUTTON_X: 64, JOY_BUTTON_Y: 128,
-}
-## How far a stick or trigger must be moved to count.
-const STICK_MOVED := 0.5
-const TRIGGER_PRESSED := 0.3
+
+const GameFlow := preload("res://game/game_flow.gd")
+## What the original's main loop is at ($100426): its attract mode, the
+## title with a credit in, "how to play", the entry of a name, and the game.
+const MAIN_ATTRACT: Array[int] = [0, 1]
+const MAIN_TITLE: Array[int] = [12, 13]
+const MAIN_HOW_TO_PLAY: Array[int] = [2, 3]
+const MAIN_NAME_ENTRY: Array[int] = [4, 18, 19]
+const MAIN_GAME: Array[int] = [6, 7]
+## Starting a game: a button is pressed for PRESS_FRAMES of every
+## PRESS_EVERY, a coin put in every COIN_EVERY, and it is given up after
+## START_FRAMES.
+const PRESS_FRAMES := 3
+const PRESS_EVERY := 8
+const COIN_FRAMES := 6
+const COIN_EVERY := 40
+const START_FRAMES := 900
+
+## What the player is at: the game, a menu over the attract mode, a game
+## being got ready behind a black screen, or a menu over a stopped game.
+enum {PLAYING, IN_MENU, STARTING, PAUSED}
 
 var machine: RefCounted
 var frame := 0
@@ -90,34 +120,59 @@ var _crt := false
 var _window_shots := false
 var _map: Minimap
 
+var _settings := Settings.new()
+## Null when the run is automated.
+var _menu: Menu
+var _state := PLAYING
+var _snapshot := ""
+var _hand_written := true
+var _native_video := true
+var _keep_video_ram := false
+## The stage of a game of one stage alone, or -1.
+var _stage := -1
+var _start_frames := 0
+## Frames a coin is still being put in for, and whether the game was
+## asking to be continued the frame before.
+var _coin_frames := 0
+var _continuing := false
+## Drawn frames so far, the keys to press by drawn frame, the key held,
+## and the drawn frame to take a screenshot at.
+var _tick := 0
+var _presses := {}
+var _held: Key = KEY_NONE
+var _shot_tick := 0
+
 @onready var video: NeoGeoVideo = $Video
 @onready var sound: SoundBoard = $Sound
 
 
 func _ready() -> void:
-	var snapshot := MachineLoader.repo_dir().path_join("data/game/start.snapshot")
+	_snapshot = MachineLoader.repo_dir().path_join("data/game/start.snapshot")
+	var automated := false
+	var menu_page := ""
+	var start_arcade := false
+	var seedlog := ""
+	var use_sound := true
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--snapshot="):
-			snapshot = arg.trim_prefix("--snapshot=")
+			_snapshot = arg.trim_prefix("--snapshot=")
+			automated = true
 		elif arg.begins_with("--shot="):
 			shot_path = arg.trim_prefix("--shot=")
 		elif arg.begins_with("--shot-frame="):
 			for value in arg.trim_prefix("--shot-frame=").split(","):
 				shot_frames.append(int(value))
+			automated = true
 		elif arg.begins_with("--input="):
 			var parts := arg.trim_prefix("--input=").split(":")
 			var span := parts[1].split("-")
 			scripted.append([parts[0], int(span[0]), int(span[1])])
-	var seedlog := ""
-	var use_sound := true
-	var hand_written := true
-	var native_video := true
-	var keep_video_ram := false
-	for arg in OS.get_cmdline_user_args():
-		if arg.begins_with("--seedlog="):
+			automated = true
+		elif arg.begins_with("--seedlog="):
 			seedlog = arg.trim_prefix("--seedlog=")
+			automated = true
 		elif arg == "--translated":
-			hand_written = false
+			_hand_written = false
 		elif arg == "--no-sound":
 			use_sound = false
 		elif arg.begins_with("--topup="):
@@ -125,55 +180,262 @@ func _ready() -> void:
 				_topup.append(int(value))
 		elif arg.begins_with("--frames="):
 			_quit_after = int(arg.trim_prefix("--frames="))
+			automated = true
 		elif arg.begins_with("--record-audio="):
 			_record_path = arg.trim_prefix("--record-audio=")
 		elif arg == "--hardware-video":
-			native_video = false
+			_native_video = false
 		elif arg == "--keep-video-ram":
-			keep_video_ram = true
+			_keep_video_ram = true
 		elif arg.begins_with("--width="):
 			_forced_width = int(arg.trim_prefix("--width="))
-		elif arg == "--crt":
-			_crt = true
-		elif arg == "--whole-pixels":
-			_whole_pixels = true
 		elif arg == "--window-shot":
 			_window_shots = true
 		elif arg.begins_with("--compare-views"):
 			_comparing = true
 			_compare_folder = arg.trim_prefix("--compare-views").trim_prefix("=")
+			automated = true
+		elif arg == "--no-menu":
+			automated = true
+		elif arg.begins_with("--menu="):
+			menu_page = arg.trim_prefix("--menu=")
+		elif arg.begins_with("--settings="):
+			_settings.path = arg.trim_prefix("--settings=")
+		elif arg.begins_with("--press="):
+			for press in arg.trim_prefix("--press=").split(","):
+				_presses[int(press.get_slice(":", 0))] = OS.find_keycode_from_string(press.get_slice(":", 1))
+		elif arg.begins_with("--shot-tick="):
+			_shot_tick = int(arg.trim_prefix("--shot-tick="))
+		elif arg == "--arcade":
+			start_arcade = true
+		elif arg.begins_with("--stage="):
+			_stage = int(arg.trim_prefix("--stage="))
+	var with_menu := not _comparing and (not automated or menu_page != "" or start_arcade or _stage >= 0)
+	if not automated:
+		_settings.load_file()
+	var args := OS.get_cmdline_user_args()
+	if args.has("--crt"):
+		_settings.crt = true
+	if args.has("--whole-pixels"):
+		_settings.whole_pixels = true
+	if args.has("--no-map"):
+		_settings.map = false
+	_settings.apply_controls()
 	if not use_sound or not sound.load_roms(MachineLoader.repo_dir().path_join("neodrift")):
 		sound = null
 	if sound != null:
 		sound.capturing = _record_path != ""
 		sound.muted = not shot_frames.is_empty()
-	machine = MachineLoader.create(hand_written)
-	if machine == null or MachineLoader.load_snapshot(machine, snapshot) != OK:
-		push_error("Could not start: need the generated program and %s" % snapshot)
+	if not _start_machine():
+		push_error("Could not start: need the generated program and %s" % _snapshot)
 		get_tree().quit(1)
 		return
 	if seedlog != "":
 		_apply_seed_log(seedlog)
-	video.machine = machine
-	if native_video or _comparing:
-		video.scene = GameScene.new(machine)
-		video.scene.translucency = not _comparing
-		machine.steady_shadows = hand_written and not _comparing
-		if not _comparing and not keep_video_ram:
-			video.scene.replace_hardware_drawing()
-			if hand_written:
-				Decomp.make_room(machine)
 	RenderingServer.set_default_clear_color(Color.BLACK)
 	if _comparing:
 		_set_up_comparison()
 		video.refresh()
-	else:
-		_set_up_screen()
-		_map.wanted = not OS.get_cmdline_user_args().has("--no-map")
-		_map.fades = shot_frames.is_empty()
-		get_viewport().size_changed.connect(_fit_view)
-		_fit_view()
-		_refresh()
+		return
+	_set_up_screen()
+	_map.fades = shot_frames.is_empty()
+	get_viewport().size_changed.connect(_fit_view)
+	if with_menu:
+		_set_up_menu()
+	_apply_settings("sound")
+	_apply_settings("game")
+	if not automated and not OS.get_cmdline_args().has("--resolution"):
+		_apply_window()
+	_apply_settings("picture")
+	if _menu != null:
+		if start_arcade or _stage >= 0:
+			_start_game(_stage)
+		else:
+			_state = IN_MENU
+			_menu.open(menu_page if menu_page != "" else "main")
+	_refresh()
+
+
+## Makes the machine anew from the snapshot it starts from, in place of the
+## one there was.
+func _start_machine() -> bool:
+	_finish_sound_task()
+	if machine != null:
+		machine.release()
+	machine = MachineLoader.create(_hand_written)
+	if machine == null or MachineLoader.load_snapshot(machine, _snapshot) != OK:
+		machine = null
+		return false
+	machine.first_course = maxi(_stage, 0)
+	video.machine = machine
+	video.scene = null
+	if _native_video or _comparing:
+		video.scene = GameScene.new(machine)
+		if not _comparing and not _keep_video_ram:
+			video.scene.replace_hardware_drawing()
+			if _hand_written:
+				Decomp.make_room(machine)
+	if _map != null:
+		_map.machine = machine
+		_apply_settings("picture")
+	return true
+
+
+# --- the menus and the player's options --------------------------------------
+
+func _set_up_menu() -> void:
+	_menu = Menu.new()
+	_menu.settings = _settings
+	add_child(_menu)
+	_menu.changed.connect(_apply_settings)
+	_menu.arcade_chosen.connect(_start_game.bind(-1))
+	_menu.stage_chosen.connect(_start_game)
+	_menu.resumed.connect(_resume)
+	_menu.main_menu_chosen.connect(_to_main_menu.bind("main"))
+	_menu.quit_chosen.connect(_quit)
+
+
+## Makes what the player has chosen in a section of the options so.
+func _apply_settings(section: String) -> void:
+	match section:
+		"picture":
+			if _menu != null and _menu.is_open():
+				_apply_window()
+			_whole_pixels = _settings.whole_pixels
+			_crt = _settings.crt
+			if video.scene != null and not _comparing:
+				video.scene.translucency = _settings.translucency
+				# the shadows are put down every frame only to be drawn see-through
+				machine.steady_shadows = _hand_written and _settings.translucency
+			_fit_view()
+		"sound":
+			AudioServer.set_bus_volume_db(0, linear_to_db(maxf(_settings.volume, 0.0001)))
+			AudioServer.set_bus_mute(0, _settings.volume <= 0.0)
+			if sound != null:
+				sound.set_volumes(_settings.music, _settings.effects)
+		"game":
+			_map.wanted = _settings.map
+
+
+func _apply_window() -> void:
+	var window := get_window()
+	var full := window.mode == Window.MODE_FULLSCREEN or window.mode == Window.MODE_EXCLUSIVE_FULLSCREEN
+	if full != _settings.full_screen:
+		window.mode = Window.MODE_FULLSCREEN if _settings.full_screen else Window.MODE_WINDOWED
+	if not _settings.full_screen and window.size != _settings.window_size:
+		window.size = _settings.window_size
+		window.move_to_center()
+	DisplayServer.window_set_vsync_mode(
+			DisplayServer.VSYNC_ENABLED if _settings.vsync else DisplayServer.VSYNC_DISABLED)
+
+
+## Starts a game from the beginning: the whole game, or `stage` alone.
+func _start_game(stage: int) -> void:
+	_stage = stage
+	_start_machine()
+	if sound != null:
+		sound.reset_driver()
+		sound.muted = true
+	_state = STARTING
+	_start_frames = 0
+	_coin_frames = 0
+	_continuing = false
+	_menu.cover("" if stage < 0 else "Practice stage" if stage == 0 else "Stage %d" % stage)
+
+
+## Back to the main menu, over the attract mode from its beginning.
+func _to_main_menu(page: String) -> void:
+	_stage = -1
+	_start_machine()
+	if sound != null:
+		sound.reset_driver()
+		sound.muted = not shot_frames.is_empty()
+	_state = IN_MENU
+	_menu.open("main")
+	if page != "main":
+		_menu.go(page)
+
+
+func _pause() -> void:
+	_state = PAUSED
+	_menu.open("pause")
+
+
+func _resume() -> void:
+	_state = PLAYING
+	_time = 0.0
+	_menu.close()
+
+
+func _quit() -> void:
+	_save_recording()
+	get_tree().quit()
+
+
+## What the coin slot and the buttons are to be while a game is got ready,
+## as [player 1, start, coin]: a coin in, start pressed at the title, and
+## for a single stage A pressed through "how to play" and the name too.
+func _starting_inputs() -> Array[int]:
+	var main: int = machine.ram.decode_u16(GameFlow.MAIN_STATE & 0xFFFF)
+	var pressed := _start_frames % PRESS_EVERY < PRESS_FRAMES
+	_start_frames += 1
+	var done: bool = main in MAIN_GAME
+	if _stage < 0 and (main in MAIN_HOW_TO_PLAY or main in MAIN_NAME_ENTRY):
+		done = true
+	if done or _start_frames > START_FRAMES:
+		_state = PLAYING
+		_menu.close()
+		if sound != null:
+			sound.muted = not shot_frames.is_empty()
+		return [0, 0, 0]
+	if main in MAIN_TITLE:
+		return [0, int(pressed), 0]
+	if main in MAIN_HOW_TO_PLAY or main in MAIN_NAME_ENTRY:
+		return [P1_BITS["a"] if pressed else 0, 0, 0]
+	return [0, 0, int(_start_frames % COIN_EVERY < COIN_FRAMES)]
+
+
+## After a frame of a game started from the menu: sees to the credit of a
+## game that asks to be continued, and to the menu when the game is over
+## (for a single stage, when the stage is).
+func _follow_game() -> void:
+	var ram: PackedByteArray = machine.ram
+	var main := ram.decode_u16(GameFlow.MAIN_STATE & 0xFFFF)
+	if main in MAIN_ATTRACT or main in MAIN_TITLE:
+		_to_main_menu("main")
+		return
+	if not main in MAIN_GAME or ram.decode_u16(GameFlow.GAME_STATE & 0xFFFF) < GameFlow.GAME_COURSES:
+		return
+	var courses := ram.decode_u16(GameFlow.COURSES_STATE & 0xFFFF)
+	var over := ram.decode_u16(GameFlow.GAME_STATE & 0xFFFF) > GameFlow.GAME_COURSES
+	if _stage >= 0:
+		if over or courses >= GameFlow.COURSES_SET_UP_CONTINUE \
+				or ram.decode_u16(GameFlow.COURSE & 0xFFFF) != _stage:
+			_to_main_menu("freeplay")
+		return
+	var continuing := not over and courses == GameFlow.COURSES_CONTINUE
+	if continuing and not _continuing and _settings.free_continues:
+		_coin_frames = COIN_FRAMES
+	_continuing = continuing
+
+
+## Is the car being driven (and not a screen before or after a race shown)?
+func _driving() -> bool:
+	var ram: PackedByteArray = machine.ram
+	return ram.decode_u16(GameFlow.MAIN_STATE & 0xFFFF) in MAIN_GAME \
+			and ram.decode_u16(GameFlow.GAME_STATE & 0xFFFF) == GameFlow.GAME_COURSES \
+			and ram.decode_u16(GameFlow.COURSES_STATE & 0xFFFF) == GameFlow.COURSES_RACE \
+			and ram.decode_u16(GameFlow.RACE_STATE & 0xFFFF) == GameFlow.RACE_DRIVING
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if _menu == null or _state != PLAYING or not event.is_action_pressed(Settings.ACTION_PREFIX + "pause"):
+		return
+	# what is also the game's start button pauses a race only
+	if event.is_action(Settings.ACTION_PREFIX + "start") and not _driving():
+		return
+	_pause()
+	get_viewport().set_input_as_handled()
 
 
 ## Puts the game's picture in a viewport of its own, shown in the window
@@ -193,6 +455,7 @@ func _set_up_screen() -> void:
 	_picture.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	_picture.clip_contents = true
 	add_child(_picture)
+	move_child(_picture, 0)
 	_enlarge_material = ShaderMaterial.new()
 	_enlarge_material.shader = preload("res://video/enlarge.gdshader")
 	_crt_material = ShaderMaterial.new()
@@ -207,17 +470,26 @@ func _set_up_screen() -> void:
 ## narrower than the hardware's picture, as wide as the window then shows,
 ## and puts it in the middle.
 func _fit_view() -> void:
+	if _picture == null:
+		return
 	var window := get_viewport().get_visible_rect().size
 	_pixel = minf(window.y / NeoGeoVideo.SCREEN.y, window.x / NeoGeoVideo.SCREEN.x)
 	if _whole_pixels:
 		_pixel = maxf(floorf(_pixel), 1.0)
-	var width := _forced_width if _forced_width > 0 else int(window.x / _pixel + 0.001)
+	var width := int(window.x / _pixel + 0.001)
+	if _forced_width > 0:
+		width = _forced_width
+	elif not _settings.wide:
+		width = int(NeoGeoVideo.SCREEN.x)
 	video.view_width = mini(width, WIDEST_VIEW) & ~1
 	_screen.size = Vector2i(video.view_width, int(NeoGeoVideo.SCREEN.y))
 	_picture.size = (Vector2(_screen.size) * _pixel).round()
 	_picture.position = ((window - _picture.size) / 2).round()
 	_map.pixel = _pixel
 	_map.size = _picture.size
+	if _menu != null:
+		_menu.position = Vector2.ZERO
+		_menu.size = window
 	if video.scene != null:
 		machine.view_margin = video.margin()
 	_show_crt()
@@ -237,14 +509,18 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	match key.physical_keycode:
 		KEY_F2:
-			_crt = not _crt
-			_show_crt()
+			_settings.crt = not _settings.crt
+			_apply_settings("picture")
 		KEY_M:
-			_map.wanted = not _map.wanted
+			_settings.map = not _settings.map
+			_apply_settings("game")
 		KEY_F11:
-			var window := get_window()
-			var full := window.mode == Window.MODE_FULLSCREEN or window.mode == Window.MODE_EXCLUSIVE_FULLSCREEN
-			window.mode = Window.MODE_WINDOWED if full else Window.MODE_FULLSCREEN
+			_settings.full_screen = not _settings.full_screen
+			_apply_window()
+		_:
+			return
+	if _menu != null:
+		_settings.save_file()
 
 
 ## Puts the picture drawn from the game's records and the one drawn from
@@ -309,6 +585,18 @@ func _apply_seed_log(path: String) -> void:
 func _process(delta: float) -> void:
 	if machine == null or machine.halted:
 		return
+	_tick += 1
+	if _held != KEY_NONE:
+		_press(_held, false)
+		_held = KEY_NONE
+	if _presses.has(_tick):
+		_held = _presses[_tick]
+		_press(_held, true)
+	if _tick == _shot_tick:
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(shot_path)
+		_quit()
+		return
 	if _comparing:
 		_step()
 		set_process(false)
@@ -339,6 +627,8 @@ func _process(delta: float) -> void:
 			else:
 				set_process(true)
 		return
+	if _state == PAUSED:
+		return
 	_time = minf(_time + delta, FRAME_TIME * 3)
 	var stepped := false
 	while _time >= FRAME_TIME and not machine.halted:
@@ -347,6 +637,14 @@ func _process(delta: float) -> void:
 		stepped = true
 	if stepped:
 		_refresh()
+
+
+func _press(key: Key, pressed: bool) -> void:
+	var event := InputEventKey.new()
+	event.keycode = key
+	event.physical_keycode = key
+	event.pressed = pressed
+	Input.parse_input_event(event)
 
 
 func _refresh() -> void:
@@ -358,34 +656,20 @@ func _step() -> void:
 	var p1 := 0
 	var start := 0
 	var coin := 0
-	for key: int in P1_KEYS:
-		if Input.is_physical_key_pressed(key):
-			p1 |= P1_KEYS[key]
-	if Input.is_physical_key_pressed(KEY_1):
-		start |= 1
-	if Input.is_physical_key_pressed(KEY_5):
-		coin |= 1
-	for pad in Input.get_connected_joypads():
-		for button: int in P1_PAD_BUTTONS:
-			if Input.is_joy_button_pressed(pad, button):
-				p1 |= P1_PAD_BUTTONS[button]
-		var stick := Vector2(Input.get_joy_axis(pad, JOY_AXIS_LEFT_X), Input.get_joy_axis(pad, JOY_AXIS_LEFT_Y))
-		if stick.y < -STICK_MOVED:
-			p1 |= 1
-		elif stick.y > STICK_MOVED:
-			p1 |= 2
-		if stick.x < -STICK_MOVED:
-			p1 |= 4
-		elif stick.x > STICK_MOVED:
-			p1 |= 8
-		if Input.get_joy_axis(pad, JOY_AXIS_TRIGGER_RIGHT) > TRIGGER_PRESSED:
-			p1 |= 16
-		if Input.get_joy_axis(pad, JOY_AXIS_TRIGGER_LEFT) > TRIGGER_PRESSED:
-			p1 |= 32
-		if Input.is_joy_button_pressed(pad, JOY_BUTTON_START):
-			start |= 1
-		if Input.is_joy_button_pressed(pad, JOY_BUTTON_BACK):
-			coin |= 1
+	if _state == STARTING:
+		var inputs := _starting_inputs()
+		p1 = inputs[0]
+		start = inputs[1]
+		coin = inputs[2]
+	elif _state == PLAYING:
+		for button: String in P1_BITS:
+			if Input.is_action_pressed(Settings.ACTION_PREFIX + button):
+				p1 |= P1_BITS[button]
+		start = int(Input.is_action_pressed(Settings.ACTION_PREFIX + "start"))
+		coin = int(Input.is_action_pressed(Settings.ACTION_PREFIX + "coin"))
+		if _coin_frames > 0:
+			_coin_frames -= 1
+			coin = 1
 	for entry in scripted:
 		if frame >= entry[1] and frame <= entry[2]:
 			if entry[0] == "start":
@@ -421,6 +705,8 @@ func _step() -> void:
 	frame += 1
 	if machine.halted:
 		_report_halt()
+	elif _menu != null and _state == PLAYING:
+		_follow_game()
 	if frame == _quit_after and not _comparing:
 		print("%d frames; game %.2f ms a frame (peak %.2f), sound %.2f ms (peak %.2f)"
 				% [frame, _machine_ms / frame, _machine_ms_peak, _sound_ms / frame, _sound_ms_peak])

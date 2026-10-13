@@ -133,6 +133,9 @@ var more_room := false
 ## not just on the frames it shows them on, for a picture that draws them
 ## on every frame (see GameScene.translucency).
 var steady_shadows := false
+## The course a game starts with (game/game_flow.gd): 0 is the practice
+## course, as in the original.
+var first_course := 0
 
 var input_p1 := 0
 var input_p2 := 0

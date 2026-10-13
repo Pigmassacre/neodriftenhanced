@@ -26,6 +26,9 @@ var adpcm := YMAdpcmA.new()
 var out_left := PackedInt32Array()
 var out_right := PackedInt32Array()
 var out_ssg := PackedInt32Array()
+## How loud the FM and SSG parts are mixed, 1 for as the chip plays them.
+var fm_gain := 1.0
+var ssg_gain := 1.0
 ## Leave parts out of render() (for checking them one at a time).
 var use_fm := true
 var use_ssg := true
@@ -192,12 +195,13 @@ func render(cycles: int) -> int:
 		out_left = adpcm.out_left.duplicate()
 		out_right = adpcm.out_right.duplicate()
 	if use_fm:
+		var gain := roundi(fm_gain * 256)
 		for channel in fm:
 			var left := channel.out_left
 			var right := channel.out_right
 			for index in count:
-				out_left[index] += left[index]
-				out_right[index] += right[index]
+				out_left[index] += (left[index] * gain) >> 8
+				out_right[index] += (right[index] * gain) >> 8
 	if use_ssg:
 		out_ssg = ssg.out
 	else:
@@ -220,8 +224,9 @@ func frames() -> PackedVector2Array:
 	var count := out_left.size()
 	var result := PackedVector2Array()
 	result.resize(count)
+	var ssg := SSG_GAIN * ssg_gain
 	for index in count:
-		var centre := out_ssg[index] * SSG_GAIN
+		var centre := out_ssg[index] * ssg
 		result[index] = Vector2(clampi(out_left[index], -32768, 32767) * MAIN_GAIN + centre,
 				clampi(out_right[index], -32768, 32767) * MAIN_GAIN + centre)
 	return result

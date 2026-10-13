@@ -21,6 +21,8 @@ const IDLE_QUEUE_WRITE := 0xFEB1
 ## Sound kept queued ahead of the audio output, in seconds: enough to ride
 ## out uneven frame times, short enough not to be heard as a delay.
 const QUEUE_TARGET := 0.05
+## The command every Neo Geo sound driver answers by starting afresh.
+const DRIVER_RESET := 0x03
 
 var cpu: Z80
 var chip := YM2610.new()
@@ -79,6 +81,22 @@ func _ready() -> void:
 	add_child(player)
 	player.play()
 	_playback = player.get_stream_playback()
+
+
+## How loud the music and the effects are, each from 0 to 1. The driver
+## plays its music as long samples on the first three sampled channels (in
+## a run of the whole game, on the first alone) and its effects on the other
+## three; the FM and SSG parts, which it hardly uses, count as effects.
+func set_volumes(music: float, effects: float) -> void:
+	for channel in 6:
+		chip.adpcm.gains[channel] = roundi((music if channel < 3 else effects) * 256)
+	chip.fm_gain = effects
+	chip.ssg_gain = effects
+
+
+## Asks the driver to start afresh, as the machine does when it is reset.
+func reset_driver() -> void:
+	command(DRIVER_RESET)
 
 
 ## Loads the driver and sample ROMs from the user's ROM folder.

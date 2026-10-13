@@ -244,8 +244,9 @@ func game_start() -> void:
 	m.d0 = with_low16(m.d0, 1)
 
 
-## $B270: a game starts with the practice course, or where the game that
-## is taken up again had got to.
+## $B270: a game starts with the practice course (or the one the machine
+## is told to start with), or where the game that is taken up again had
+## got to.
 func start_game() -> void:
 	m.call_routine(0x169A8)
 	if u16(RESUMING) == 1:
@@ -256,7 +257,7 @@ func start_game() -> void:
 		m.call_routine(0x11A02)
 		m.call_routine(0x16950)
 	else:
-		set16(COURSE, 0)
+		set16(COURSE, m.first_course)
 	set16(COURSES_STATE, COURSES_SET_UP_INTRODUCTION)
 	m.d0 = with_low16(m.d0, 0)
 

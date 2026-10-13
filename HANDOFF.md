@@ -368,9 +368,44 @@ are in game pixels as before; `--window-shot` takes the window.
   65536), and a car is put on it by its offset from the nearest waypoint.
   The practice course has no waypoints and gets no map. It is shown while
   `NeoGeoVideo.hud_shown`, and is not behind the CRT look.
-- **Gamepads** are read in `game.gd`'s `_step` along with the keyboard,
-  every connected pad as player 1. There is no remapping yet, and no
-  second player on keyboard or pad.
+- **Controls** are input actions (`game_up`, `game_a`, ...) made by
+  `settings.gd` from the player's choices: a key and two gamepad places
+  each. Every connected pad is player 1; there is no second player.
+
+### The menus
+
+`menu/menu.gd` is the main menu, the options and the pause menu, drawn over
+the picture at the window's resolution; `settings.gd` holds the options and
+keeps them in `user://settings.cfg`. `game.gd` does what a choice means:
+
+- **The main menu is over the original's attract mode**, the machine
+  running with no inputs. Choosing a game restarts the machine from the
+  start snapshot and works its inputs behind a black screen
+  (`_starting_inputs`): a coin, start at the title, and for a single stage
+  A through "how to play" and the name entry as well. It goes by the main
+  loop's state at `$100426` (0, 1 attract; 12, 13 title with a credit; 2, 3
+  how to play; 4, 18, 19 name entry; 6, 7 the game; 10, 8, 9 after it).
+- **Freeplay** is a game of one stage: `NeoGeoMachine.first_course` is the
+  course `start_game` (`game_flow.gd`) starts with, and `_follow_game`
+  goes back to the menu when the course changes, the game asks to be
+  continued or is over.
+- **Back to the menu** always restarts the machine (a credit left in would
+  start a game by itself at the title), and sends the sound driver its
+  reset command (3). So best times do not outlast a game.
+- **Free continues**: a coin is put in when the continue screen appears.
+- **Pause** is the machine not being stepped. A button that is both pause
+  and start (Start on a gamepad) pauses only while driving.
+- **Music and effects volumes**: the driver plays music as long samples on
+  the first sampled channel and effects on the last three (measured over
+  6000 frames; the FM part made no sound at all there), so the two gains
+  are per sampled channel (`SoundBoard.set_volumes`).
+- An automated run (`--input`, `--shot-frame`, `--frames`, `--snapshot`,
+  `--seedlog`, `--compare-views`, `--no-menu`) has no menus and reads no
+  stored options: the verification tools are unaffected.
+- To try the menus without hands: `--press=TICK:KEY,...` presses keys,
+  `--shot=PATH --shot-tick=N` takes a window screenshot,
+  `--settings=PATH` keeps the options elsewhere, `--menu=PAGE`,
+  `--arcade` and `--stage=N` start where the menu would lead.
 
 ## What works, and how it was verified
 
@@ -542,14 +577,13 @@ python3 verify_session.py practice_steer --translated --compare-views   # the sc
       places — the recompiler's own decoder (`Tools/recomp/m68k.py`) is the
       authority.
 14. Of the enhancements of `TODO.md`, these are in (see "Drawing" above):
-    the wide view, menus included; real translucency; the minimap; gamepads
-    (no remapping); a CRT shader. Not started: the reworked menus (which
-    need the options kept somewhere, for what are now keys and command line
-    flags: CRT look, map, whole pixels, full screen) and the reworked HUD.
-    Both can be drawn over the picture at the window's resolution like the
-    minimap; the HUD's values are in `hud.gd` and `race_clock.gd`, and the
-    original's HUD would then have to be left out of the text layer and
-    the objects (depth `$7000` and up).
+    the wide view, menus included; real translucency; the minimap; gamepads;
+    a CRT shader; the reworked menus with stored options. Not started: the
+    reworked HUD, which can be drawn over the picture at the window's
+    resolution like the minimap; its values are in `hud.gd` and
+    `race_clock.gd`, and the original's HUD would then have to be left out
+    of the text layer and the objects (depth `$7000` and up). The menus were
+    only tried with scripted key presses: no gamepad, no mouse, not by hand.
 15. Generated code load time is about 5 s (6 MB of GDScript). Fine for now.
 
 ## Traps that cost time

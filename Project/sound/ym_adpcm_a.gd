@@ -18,6 +18,10 @@ var out_left := PackedInt32Array()
 var out_right := PackedInt32Array()
 
 var rom := PackedByteArray()
+## How loud each channel is mixed, 256 for as the chip plays it. The game's
+## driver plays its music on the first channel and its effects on the last
+## three (see SoundBoard.set_volumes).
+var gains := PackedInt32Array([256, 256, 256, 256, 256, 256])
 
 var _reg := PackedByteArray()
 var _playing := PackedInt32Array([0, 0, 0, 0, 0, 0])
@@ -125,6 +129,7 @@ func _mix() -> void:
 		# 12-bit signed value, scaled to 16 bits
 		var value := ((accumulator ^ 0x800) - 0x800) << 4
 		value = ((value * (15 - (attenuation & 7))) >> (5 + (attenuation >> 3))) & ~3
+		value = (value * gains[channel]) >> 8
 		if control & 0x80:
 			_left += value
 		if control & 0x40:
