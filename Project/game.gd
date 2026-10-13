@@ -81,6 +81,8 @@ const PRESS_EVERY := 8
 const COIN_FRAMES := 6
 const COIN_EVERY := 40
 const START_FRAMES := 900
+## Drawn frames a key of --press is held for.
+const PRESS_TICKS := 3
 
 ## What the player is at: the game, a menu over the attract mode, a game
 ## being got ready behind a black screen, or a menu over a stopped game.
@@ -142,6 +144,7 @@ var _continuing := false
 var _tick := 0
 var _presses := {}
 var _held: Key = KEY_NONE
+var _held_until := 0
 var _shot_tick := 0
 
 @onready var video: NeoGeoVideo = $Video
@@ -607,11 +610,12 @@ func _process(delta: float) -> void:
 	if machine == null or machine.halted:
 		return
 	_tick += 1
-	if _held != KEY_NONE:
+	if _held != KEY_NONE and _tick >= _held_until:
 		_press(_held, false)
 		_held = KEY_NONE
 	if _presses.has(_tick):
 		_held = _presses[_tick]
+		_held_until = _tick + PRESS_TICKS
 		_press(_held, true)
 	if _tick == _shot_tick:
 		await RenderingServer.frame_post_draw
@@ -729,6 +733,8 @@ func _step() -> void:
 		_report_halt()
 	elif _menu != null and _state == PLAYING:
 		_follow_game()
+	if _map != null:
+		_map.follow()
 	if frame == _quit_after and not _comparing:
 		print("%d frames; game %.2f ms a frame (peak %.2f), sound %.2f ms (peak %.2f)"
 				% [frame, _machine_ms / frame, _machine_ms_peak, _sound_ms / frame, _sound_ms_peak])

@@ -10,7 +10,7 @@
 - [x] Widescreen/ultrawide support in menus as well (the background should keep repeating)
 - [x] Actual translucency instead of faked (render every other frame) translucency
 - [x] Minimap
-- [ ] Show shortcuts on minimap, and minimap support for all stages (practice etc)
+- [x] Show shortcuts on minimap, and minimap support for all stages (practice etc)
 - [x] Reworked menus
   - New main menu
     - Arcade mode

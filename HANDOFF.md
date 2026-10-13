@@ -362,12 +362,23 @@ are in game pixels as before; `--window-shot` takes the window.
   scanlines with beams wider where brighter, pixels run together across,
   a stripe mask and a little glow. Only used from three screen pixels to a
   game pixel. Its amounts are uniforms, for an options menu to set.
-- **`hud/minimap.gd`** (M, `--no-map`) is the map in a race. The game has
-  no map of a course as a whole, so the route is the list of waypoints the
-  other cars follow (`rival.gd`), unwrapped (course positions wrap at
-  65536), and a car is put on it by its offset from the nearest waypoint.
-  The practice course has no waypoints and gets no map. It is shown while
-  `NeoGeoVideo.hud_shown`, and is not behind the CRT look.
+- **`hud/minimap.gd`** (M, `--no-map`) is the map in a race, on every
+  course. The game has no picture of a course as a whole, so the road is
+  found in the ground's codes (`ground.gd`: one for every 8 by 8 pixels,
+  16 by 128 cells of 256 pixels on every course): from where the car
+  starts, everything reachable without crossing a wall (codes below `$20`)
+  or slow ground (open ground of surfaces 8 to 13, which lines every road),
+  not going back behind the start, up to the first finish line met (surface
+  7; the road goes on past it into repeats of itself). That takes about a
+  second, so it runs on a worker thread. A course is wider than the ground
+  is across (4096 pixels) and goes round it several times, so the search
+  keeps for every place how many times round it was (`_turns`), and a car
+  is put on the map by the road under it, or failing that from where it
+  last was. Road more than `OFF_ROUTE` from the other cars' waypoints
+  (`rival.gd`) is drawn in another colour: the ways they do not take. The
+  practice course has no waypoints, so none there. The driven part is the
+  car's own trail. It is shown while `NeoGeoVideo.hud_shown`, and is not
+  behind the CRT look.
 - **`hud/race_hud.gd`** (F3, the Game options, `--hud=`) is the HUD of a
   race drawn with a scalable font: time taken, time left, speed, the bar to
   the next checkpoint, the stage and "Speed down". It reads the game's own

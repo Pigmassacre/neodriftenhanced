@@ -31,8 +31,6 @@ const BAR_HEIGHT := 92.0
 const BAR_WIDTH := 5.0
 ## Frames it takes to appear.
 const FADE_FRAMES := 20.0
-## What the game shows in place of a digit that is not there.
-const NO_DIGIT := 0x3A
 
 var machine: NeoGeoMachine
 ## Screen pixels to a game pixel.
@@ -132,8 +130,11 @@ func _draw_speed(down: float) -> void:
 	var digits := ""
 	for index in 3:
 		var digit: int = machine.r8(Hud.SPEED_DIGITS + index)
-		if digit != NO_DIGIT:
+		# anything else is a digit that is not there (or not there yet)
+		if digit >= 0x30 and digit <= 0x39:
 			digits += char(digit)
+	if digits == "":
+		digits = "0"
 	var base := down - INSET - 4
 	# the room of three digits, so that the unit stays where it is
 	var room := _font.get_string_size("000", HORIZONTAL_ALIGNMENT_LEFT, -1, roundi(LARGE * pixel)).x / pixel
