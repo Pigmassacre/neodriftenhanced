@@ -46,13 +46,13 @@ hardware would. The rest are listed at the top of `Project/game.gd`.
 ## Builds and releases
 
 ```sh
-python3 Tools/build.py              # Builds/NeoDriftOutEnhanced-VERSION-{linux,windows}.zip
-python3 Tools/release.py 1.0        # builds, tags v1.0 and publishes a GitHub release
+Tools/build.sh              # Builds/NeoDriftOutEnhanced-VERSION-{linux,windows}.zip
+Tools/release.sh 1.0        # builds, tags v1.0 and publishes a GitHub release
 ```
 
 The zips hold no part of the game: an exported game asks for the player's
 own `neodrift.zip` and `neogeo.zip` (MAME's sets) beside it, and makes what
-it needs from them on the first start. `release.py --dry-run` builds
+it needs from them on the first start. `release.sh --dry-run` builds
 without publishing, `--draft` leaves the release a draft.
 
 ## Mods
