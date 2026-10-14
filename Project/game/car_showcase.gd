@@ -231,18 +231,33 @@ func name_sliding() -> void:
 		set16(STATE, TURNING)
 	var car := wrap16(u16(CHOSEN_CAR) * 4)
 	var entry := m.r32(NAMES_FROM_RIGHT + car)
+	var margin := m.view_margin
 	for index in 2:
 		var sprite := _sprite(index)
-		var x := _show(sprite, entry + index * 8, u16(FROM_RIGHT))
-		Sprite.show(m, sprite, x <= 0x140)
+		var x := _show(sprite, entry + index * 8, _widened(u16(FROM_RIGHT)))
+		Sprite.show(m, sprite, x <= 0x140 + margin)
 	entry = m.r32(NAMES_FROM_LEFT + car)
 	for index in 2:
 		var sprite := _sprite(2 + index)
-		var x := _show(sprite, entry + index * 8, u16(FROM_LEFT))
+		var x := _show(sprite, entry + index * 8, _widened(u16(FROM_LEFT)))
 		Sprite.show(m, sprite, x >= -0x80)
 	set16(FROM_RIGHT, u16(FROM_RIGHT) - NAME_SPEED)
 	set16(FROM_LEFT, u16(FROM_LEFT) + NAME_SPEED)
 	m.d0 = with_low16(m.d0, 1)
+
+
+## Where a half of the name that is `from` is drawn. In a picture wider than
+## the original's (the machine's `view_margin`) the halves come from its
+## edges, as much faster as they have further to go, and are drawn even
+## where the original's picture ends.
+func _widened(from: int) -> int:
+	var margin := m.view_margin
+	if margin <= 0:
+		return from
+	for index in NAME_SPRITES:
+		m.open_records[_sprite(index) & 0xFFFF] = true
+	var way := 0x140 - NAME_AT
+	return wrap16(NAME_AT + (wrap16(from) - NAME_AT) * (way + margin) / way)
 
 
 ## $36A4: the car turns round, a step every second frame; at the end the

@@ -19,7 +19,7 @@ extends Node2D
 ## coin and Esc pauses. On a gamepad, stick or pad steers, the four buttons
 ## are A B C D (A below, B right, C left, D above), the right and left
 ## triggers are A and B too, Start is start (and pauses a race) and Back
-## inserts a coin. F2 turns the picture-tube look on and off, M the map,
+## inserts a coin. F2 turns the CRT look on and off, M the map,
 ## F3 changes the HUD, F11 full screen.
 ##
 ## Options after `--` (automated: --snapshot, --input, --seedlog, --shot-frame,
@@ -55,7 +55,7 @@ extends Node2D
 ##   --keep-video-ram           draw from the game's records, but leave the original's code
 ##                              that draws to video RAM running too
 ##   --width=N                  how wide a picture to draw, instead of as wide as the window
-##   --crt                      start with the picture-tube look on
+##   --crt                      start with the CRT look on
 ##   --whole-pixels             enlarge the picture a whole number of times only
 ##   --no-map                   start with the map off
 ##   --hud=new|original|none    the HUD of a race (automated: the original's)
@@ -131,7 +131,7 @@ var _picture: TextureRect
 var _pixel := 1.0
 var _whole_pixels := false
 var _enlarge_material: ShaderMaterial
-## The picture-tube look: drawn over the picture and all that is on it.
+## The CRT look: drawn over the picture and all that is on it.
 var _crt_material: ShaderMaterial
 var _crt_glass: ColorRect
 var _crt := false

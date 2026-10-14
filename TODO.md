@@ -39,6 +39,10 @@
 - [x] The game starts paused behind the main menu
 - [x] Car selection: cars moving in and out are drawn outside the original picture's width
 - [x] The CRT look of opencircuitbreakers, with its curved glass
+- [x] Results screen: its backdrop is empty at the wide sides while it is being built
+- [x] Attract mode's car showcase: cars are drawn outside the original picture's width
+- [x] Options use technical names: "CRT", "V-Sync", "Transparent shadows"
+- [ ] Menu graphics reworked: lively and flashy, Gran Turismo meets WipEout
 
 ## Future stuff
 

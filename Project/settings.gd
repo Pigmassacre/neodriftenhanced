@@ -35,7 +35,7 @@ const HUD_NEW := 0
 const HUD_ORIGINAL := 1
 const HUD_NONE := 2
 const HUD_NAMES: Array[String] = ["New", "Original", "None"]
-## The curve of the picture tube's glass at its most (video/crt.gdshader).
+## The curve of the CRT's glass at its most (video/crt.gdshader).
 const MOST_CRT_CURVE := 0.15
 ## How far a stick or trigger must be moved to count.
 const STICK_MOVED := 0.5
@@ -65,7 +65,7 @@ var vsync := true
 var wide := true
 var whole_pixels := false
 var crt := false
-## How much the picture tube's glass curves, from 0 to 1.
+## How much the CRT's glass curves, from 0 to 1.
 var crt_curve := 0.3
 var translucency := true
 ## The game.

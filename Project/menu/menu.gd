@@ -172,12 +172,12 @@ func _show() -> void:
 			_title.text = "Picture"
 			_switch("Full screen", "picture", "full_screen")
 			_window_size()
-			_switch("Vertical sync", "picture", "vsync")
+			_switch("V-Sync", "picture", "vsync")
 			_switch("Wide picture", "picture", "wide")
 			_switch("Whole-number scaling", "picture", "whole_pixels")
-			_switch("Picture-tube look", "picture", "crt")
-			_volume("Curve of the tube", "crt_curve", "picture")
-			_switch("See-through shadows", "picture", "translucency")
+			_switch("CRT", "picture", "crt")
+			_volume("CRT curvature", "crt_curve", "picture")
+			_switch("Transparent shadows", "picture", "translucency")
 			_item("Back", _back)
 		"sound":
 			_title.text = "Sound"

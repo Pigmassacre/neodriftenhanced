@@ -364,7 +364,12 @@ beyond them:
   What the hand-written game puts in `NeoGeoMachine.open_records` is drawn
   wherever it is: the cars of the car choice (`car_choice.gd`'s `_widen`),
   which come from the picture's edge and slide across all of it, the car
-  that leaves on six sprite objects of its own.
+  that leaves on six sprite objects of its own; the halves of a car's name
+  in the attract mode's showcase (`car_showcase.gd`'s `_widened`); and the
+  tiles that carry a course result's emblem on to the picture's edges
+  (`ranking_screens.gd`'s `_widen_emblem`; there are records for all of
+  them up to about 21:9), which grow in one after the other across the
+  whole picture.
 - **The text layer** stays in the middle (`fix.gdshader`). The game fills
   its first and last column (two on some screens) with a black tile to
   hide the ground's ragged edges; those columns are left out. It also
@@ -398,10 +403,6 @@ course. At 640 wide Stage 1 uses at most 29 slots.
 Left to do:
 
 - The camera still frames the car for 320 pixels (`aim_camera`).
-- The results' backdrop is built up by bands 288 pixels wide before the
-  ground takes over: the sides are empty for those 44 frames.
-- The attract mode's cars (`car_showcase.gd`) still leave at the edges of
-  the middle 320 pixels.
 - Never looked at in a wide view: two players, continuing, name entry
   after a ranked game, and the other cars in a game (the attract demos'
   were).
@@ -436,7 +437,7 @@ project's own stretching is off, so what is drawn over the picture is at
 the window's resolution. Screenshots (`--shot`) are of `_screen`, so they
 are in game pixels as before; `--window-shot` takes the window.
 
-- **`video/crt.gdshader`** (F2, `--crt`) is the picture-tube look:
+- **`video/crt.gdshader`** (F2, `--crt`) is the CRT look:
   the one of opencircuitbreakers, fitted to the game's picture. It is a
   rectangle over the picture and everything on it (HUD, map, menus; a
   canvas layer of its own in `game.gd`) that draws what is under it

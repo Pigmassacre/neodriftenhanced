@@ -82,6 +82,12 @@ const BESTS := 0x100002
 const BEST_NAME := 4
 const LIST_PAUSE := 60
 const SOUND_BEST_THREE := 0x186C
+## The emblem's columns are the backdrop's, which comes round every eight.
+const EMBLEM_PERIOD := 8
+
+## In a picture wider than the original's, the emblem's tiles to either
+## side of it: [record, column, row, delay].
+var _side_tiles: Array = []
 
 
 func routines() -> Dictionary:
@@ -241,6 +247,40 @@ func set_up_emblem() -> void:
 			_set_up_tile(TILES + index * TILE_SIZE, row * 0x60 - index * 0x10, 0x10 + column * 0x20,
 					0x20 + row * 0x20, m.r32(pictures + index * 4))
 	set16(RESULT.clock, 0)
+	_side_tiles.clear()
+	if m.view_margin > 0:
+		_widen_emblem(pictures)
+
+
+## For a picture wider than the original's (the machine's `view_margin`):
+## more tiles carry the emblem on to the picture's edges, as far as there
+## are records for them, and the tiles grow one after the other across all
+## of it in the time they took across the original's.
+func _widen_emblem(pictures: int) -> void:
+	var first := floori((-m.view_margin - 0x30) / 32.0) + 1
+	var last := ceili((0x130 + m.view_margin) / 32.0) - 1
+	var columns := []
+	for way in maxi(-first, last - 8):
+		for column: int in [-1 - way, 9 + way]:
+			if column >= first and column <= last:
+				columns.append(column)
+	for column: int in columns:
+		for row in 7:
+			var sprite := Sprite.take_record(m)
+			if sprite == 0:
+				return
+			Sprite.picture(m, sprite, m.r32(pictures + (row * 9 + posmod(column, EMBLEM_PERIOD)) * 4))
+			Sprite.show(m, sprite, false)
+			m.open_records[sprite & 0xFFFF] = true
+			_side_tiles.append([sprite, column, row, _wide_delay(row, column, first, last)])
+	for index in TILE_COUNT:
+		set16(TILES + index * TILE_SIZE + DELAY, _wide_delay(index / 9, index % 9, first, last))
+
+
+## When the tile at `row` and `column` starts to grow, the columns from
+## `first` to `last` taking the time the original's nine take.
+static func _wide_delay(row: int, column: int, first: int, last: int) -> int:
+	return wrap16(-row * 0x30 - (column - first) * 8 * 0x10 / (last - first))
 
 
 ## $433E
@@ -258,6 +298,8 @@ func grow_emblem() -> void:
 	var clock := u16(RESULT.clock)
 	for index in TILE_COUNT:
 		_grow_tile(TILES + index * TILE_SIZE, wrap16(clock))
+	for tile: Array in _side_tiles:
+		_grow_side_tile(tile, wrap16(clock))
 	set16(RESULT.clock, clock + 0x10)
 	var last := TILES + (TILE_COUNT - 1) * TILE_SIZE
 	m.a0 = AFTER_EMBLEM if wrap16(clock + u16(last + DELAY)) > 0x100 else 0
@@ -277,6 +319,20 @@ func _grow_tile(tile: int, clock: int) -> void:
 	Sprite.show(m, sprite, true)
 
 
+## A tile of `_side_tiles` as `_grow_tile` grows those of the original.
+func _grow_side_tile(tile: Array, clock: int) -> void:
+	var sprite: int = tile[0]
+	var height := wrap16(clock + tile[3])
+	if height < 1:
+		Sprite.show(m, sprite, false)
+		return
+	height = mini(height, 0x100)
+	Sprite.zoom(m, sprite, 0x100, height)
+	Sprite.place(m, sprite, 0x10 + tile[1] * 0x20, 0x20 + tile[2] * 0x20 - (height >> 4))
+	set16(sprite + Sprite.PALETTE, 0xFFB0 + mini(height >> 4, 0xF))
+	Sprite.show(m, sprite, true)
+
+
 ## $4498: the emblem's sprite objects make way for the same picture drawn
 ## as ground.
 func clear_emblem() -> void:
@@ -285,6 +341,10 @@ func clear_emblem() -> void:
 	_restore(saved)
 	for index in TILE_COUNT:
 		Sprite.free_record(m, u32(TILES + index * TILE_SIZE + SPRITE))
+	for tile: Array in _side_tiles:
+		Sprite.free_record(m, tile[0])
+		m.open_records.erase(tile[0] & 0xFFFF)
+	_side_tiles.clear()
 
 
 # --- the title ---------------------------------------------------------------
