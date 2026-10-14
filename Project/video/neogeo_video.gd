@@ -765,6 +765,11 @@ func _load_map() -> void:
 	var rom: PackedByteArray = machine.rom
 	for block in scene.block_count:
 		var address: int = machine.r32(scene.blocks + block * 4) & 0xFFFFFF
+		if address >= Mods.EXTRA_START:
+			# a course of a mod's
+			address -= Mods.EXTRA_START
+			block_bytes.append_array(machine.extra_rom.slice(address, address + 0x400))
+			continue
 		if address >= 0x200000:
 			address -= 0x100000
 		block_bytes.append_array(rom.slice(address, address + 0x400))

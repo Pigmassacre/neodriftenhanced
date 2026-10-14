@@ -18,6 +18,8 @@ extends Control
 signal arcade_chosen
 ## A stage chosen to drive on its own: 0 for the practice stage.
 signal stage_chosen(stage: int)
+## A course of a mod's (mods/mod_courses.gd), made from course `stage`.
+signal course_chosen(mod: String, stage: int)
 signal resumed
 signal main_menu_chosen
 signal quit_chosen
@@ -63,6 +65,8 @@ const CHOOSE_TIME := 0.12
 const CHOSEN_SHIFT := 1.6
 
 ## What each page is called where the way to it is shown.
+const ModCourses := preload("res://mods/mod_courses.gd")
+
 const PAGE_NAMES := {
 	"main": "Main menu", "pause": "Paused", "freeplay": "Freeplay", "options": "Options",
 	"picture": "Picture", "sound": "Sound", "controls": "Controls", "game": "Game",
@@ -335,6 +339,11 @@ func _show(arriving := true) -> void:
 						func() -> void: stage_chosen.emit(stage))
 				if stage > 0:
 					button.set_meta("about", "Stage %d on its own." % stage)
+			for mod in Mods.enabled(settings.mods_off):
+				if ModCourses.is_course(mod):
+					var base := ModCourses.base_of(mod)
+					var button := _item(ModCourses.name_of(mod), func() -> void: course_chosen.emit(mod.id, base))
+					button.set_meta("about", mod.description if mod.description != "" else "A course of the mod %s." % mod.name)
 			_item("Back", _back)
 		"options":
 			_title.text = "Options"

@@ -47,7 +47,10 @@
 ## Future stuff
 
 - Level editor / custom level support
-- Mod support
-  - Cars
-  - Graphics
-  - Etc
+- [x] Mod support (MODDING.md)
+  - [x] Cars: speed, acceleration, braking, grip, turning and looks, in place of one of the three
+  - [x] Graphics: any picture, ground block or letter, in full colour, up to four times as fine
+  - [x] Tracks: courses made from the game's, with the map of cells rearranged, cells repainted,
+    ground codes, start, times, checkpoints and the other cars' route; listed in Freeplay
+  - [x] Etc: any table of the program ROM
+- Mods: scenery of a course's own, a fourth car and more, sounds

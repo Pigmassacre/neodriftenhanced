@@ -65,6 +65,7 @@ extends Node2D
 ##   --mods=ID[,ID...]          use these mods (mods/mods.gd), and no others, even when
 ##                              automated; --no-mods none (automated runs use none)
 ##   --mod-folder=PATH          look for mods in that folder too
+##   --course-mod=ID            with --stage, drive that mod's course (mods/mod_courses.gd)
 ##   --dump-graphics=FOLDER     save every picture the game shows, for making mods
 
 ## The hardware refreshes slightly slower than 60 Hz.
@@ -79,6 +80,7 @@ const WIDEST_VIEW := 640
 const P1_BITS := {"up": 1, "down": 2, "left": 4, "right": 8, "a": 16, "b": 32, "c": 64, "d": 128}
 
 const GameFlow := preload("res://game/game_flow.gd")
+const ModCourses := preload("res://mods/mod_courses.gd")
 ## What the original's main loop is at ($100426): its attract mode, the
 ## title with a credit in, "how to play", the entry of a name, and the game.
 const MAIN_ATTRACT: Array[int] = [0, 1]
@@ -155,6 +157,8 @@ var _mods: Array[Mods.Mod] = []
 var _use_mods := true
 var _named_mods: Array = []
 var _graphics_key := ""
+## The mod whose course is driven in place of the one it is made from, or "".
+var _course_mod := ""
 ## True when the mods have been turned on or off since the machine started.
 var _mods_changed := false
 var _dump: RefCounted
@@ -272,6 +276,8 @@ func _ready() -> void:
 			_named_mods = Array(arg.trim_prefix("--mods=").split(",", false))
 		elif arg.begins_with("--mod-folder="):
 			Mods.more_folders.append(arg.trim_prefix("--mod-folder="))
+		elif arg.begins_with("--course-mod="):
+			_course_mod = arg.trim_prefix("--course-mod=")
 		elif arg == "--no-mods":
 			_use_mods = false
 		elif arg.begins_with("--dump-graphics="):
@@ -332,7 +338,7 @@ func _ready() -> void:
 	_apply_settings("picture")
 	if _menu != null:
 		if start_arcade or _stage >= 0:
-			_start_game(_stage)
+			_start_game(_stage, _course_mod)
 		else:
 			_enter_menu()
 			_menu.open(menu_page if menu_page != "" else "main")
@@ -387,6 +393,7 @@ func _set_up_menu() -> void:
 			_to_main_menu("main"))
 	_menu.arcade_chosen.connect(_start_game.bind(-1))
 	_menu.stage_chosen.connect(_start_game)
+	_menu.course_chosen.connect(func(mod: String, stage: int) -> void: _start_game(stage, mod))
 	_menu.resumed.connect(_resume)
 	_menu.main_menu_chosen.connect(_to_main_menu.bind("main"))
 	_menu.quit_chosen.connect(_quit)
@@ -444,9 +451,11 @@ func _apply_window() -> void:
 			DisplayServer.VSYNC_ENABLED if _settings.vsync else DisplayServer.VSYNC_DISABLED)
 
 
-## Starts a game from the beginning: the whole game, or `stage` alone.
-func _start_game(stage: int) -> void:
+## Starts a game from the beginning: the whole game, or `stage` alone, or
+## the course of the mod `course_mod`.
+func _start_game(stage: int, course_mod := "") -> void:
 	_stage = stage
+	_course_mod = course_mod
 	_start_machine()
 	if sound != null:
 		sound.reset_driver()
@@ -457,12 +466,17 @@ func _start_game(stage: int) -> void:
 	_start_frames = 0
 	_coin_frames = 0
 	_continuing = false
-	_menu.cover("" if stage < 0 else "Practice stage" if stage == 0 else "Stage %d" % stage)
+	var title := "" if stage < 0 else "Practice stage" if stage == 0 else "Stage %d" % stage
+	for mod in _mods:
+		if mod.id == course_mod:
+			title = ModCourses.name_of(mod)
+	_menu.cover(title)
 
 
 ## Back to the main menu, over the attract mode from its beginning.
 func _to_main_menu(page: String) -> void:
 	_stage = -1
+	_course_mod = ""
 	_start_machine()
 	if sound != null:
 		sound.reset_driver()
@@ -530,8 +544,8 @@ func _apply_mods() -> void:
 		for mod in Mods.find_all():
 			if (mod.id in _named_mods) if not _named_mods.is_empty() else not mod.id in _settings.mods_off:
 				_mods.append(mod)
-	Mods.apply_to_machine(machine, _mods)
-	var key := ",".join(_mods.map(func(mod: Mods.Mod) -> String: return mod.id))
+	var new_tiles := Mods.apply_to_machine(machine, _mods, _course_mod)
+	var key := ",".join(_mods.map(func(mod: Mods.Mod) -> String: return mod.id)) + "/" + _course_mod
 	if key == _graphics_key:
 		return
 	_graphics_key = key
@@ -539,7 +553,7 @@ func _apply_mods() -> void:
 	if not _mods.is_empty():
 		graphics = preload("res://mods/mod_graphics.gd").new()
 		graphics.build(_mods, machine.rom,
-				FileAccess.get_file_as_bytes(MachineLoader.repo_dir().path_join("data/game/tiles.bin")))
+				FileAccess.get_file_as_bytes(MachineLoader.repo_dir().path_join("data/game/tiles.bin")), new_tiles)
 	video.set_replacements(graphics)
 	_replaced_scale = graphics.scale if graphics != null and graphics.count > 0 else 1
 	_fit_view()

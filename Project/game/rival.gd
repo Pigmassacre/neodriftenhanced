@@ -671,18 +671,18 @@ func follow_waypoints() -> void:
 	var rival := m.a6
 	m.a5 = 0x108000
 	var course := u16(Car.COURSE)
-	var waypoints := rom_u32(WAYPOINTS + wrap16(course * 4))
+	var waypoints := m.r32(WAYPOINTS + wrap16(course * 4))
 	var heading_for := u16(rival + WAYPOINT)
 	if heading_for == 0:
-		set16(rival + X, rom_u16(waypoints))
-		set16(rival + Y, rom_u16(waypoints + 2))
+		set16(rival + X, m.r16(waypoints))
+		set16(rival + Y, m.r16(waypoints + 2))
 		set16(rival + WAYPOINT, 1)
 		set16(rival + SPEED, 0xA)
 		return
 	var waypoint := waypoints + wrap16(heading_for * WAYPOINT_SIZE)
 	if _is_at(rival, waypoint):
 		heading_for = (heading_for + 1) & 0xFFFF
-		if rom_u16(WAYPOINT_COUNTS + wrap16(course * 2)) <= heading_for:
+		if m.r16(WAYPOINT_COUNTS + wrap16(course * 2)) <= heading_for:
 			heading_for = 0
 		set16(rival + WAYPOINT, heading_for)
 	elif heading_for > 1 and _is_at(rival, waypoint - 2 * WAYPOINT_SIZE):
@@ -690,10 +690,10 @@ func follow_waypoints() -> void:
 
 
 func _is_at(rival: int, waypoint: int) -> bool:
-	var width := rom_u16(waypoint + 4)
-	var height := rom_u16(waypoint + 6)
-	var x := (u16(rival + X) - rom_u16(waypoint) + (width >> 1)) & 0xFFFF
-	var y := (u16(rival + Y) - rom_u16(waypoint + 2) + (height >> 1)) & 0xFFFF
+	var width := m.r16(waypoint + 4)
+	var height := m.r16(waypoint + 6)
+	var x := (u16(rival + X) - m.r16(waypoint) + (width >> 1)) & 0xFFFF
+	var y := (u16(rival + Y) - m.r16(waypoint + 2) + (height >> 1)) & 0xFFFF
 	return x < width and y < height
 
 
@@ -749,9 +749,10 @@ func look_up_ground() -> void:
 ## to it), and brakes while faster than the waypoint asks for.
 func steer() -> void:
 	var rival := m.a6
-	var waypoint := rom_u32(WAYPOINTS + wrap16(u16(Car.COURSE) * 4)) + wrap16(u16(rival + WAYPOINT) * WAYPOINT_SIZE)
-	var x := wrap16(rom_u16(waypoint) - u16(rival + X))
-	var y := wrap16(rom_u16(waypoint + 2) - u16(rival + Y))
+	# read as the bus has them: a mod's course may have them past the ROM
+	var waypoint := m.r32(WAYPOINTS + wrap16(u16(Car.COURSE) * 4)) + wrap16(u16(rival + WAYPOINT) * WAYPOINT_SIZE)
+	var x := wrap16(m.r16(waypoint) - u16(rival + X))
+	var y := wrap16(m.r16(waypoint + 2) - u16(rival + Y))
 	var off := Angles.towards(m, x, y) - (((u16(rival + FACING) + 0x80) & 0xFFFF) >> 8)
 	var across := absi(x)
 	var down := absi(y)
@@ -765,7 +766,7 @@ func steer() -> void:
 		set16(rival + STEER, 0)
 	else:
 		set16(rival + STEER, STEER_RIGHT)
-	var brakes := s16(rival + SPEED) > rom_s16(waypoint + 8)
+	var brakes := s16(rival + SPEED) > wrap16(m.r16(waypoint + 8))
 	set16(rival + ACCELERATOR, 0 if brakes else 1)
 	set16(rival + BRAKE, 1 if brakes else 0)
 

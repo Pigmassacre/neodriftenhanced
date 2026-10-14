@@ -43,6 +43,13 @@ options, `--arcade` and `--stage=3` go straight to a game, `--width=320`
 keeps the original width, and `--hardware-video` draws exactly what the
 hardware would. The rest are listed at the top of `Project/game.gd`.
 
+## Mods
+
+Mods replace pictures (in full colour, up to four times as fine), change the
+cars, make new courses from the game's, and change the program's tables.
+They are folders in `mods/`, turned on and off on the main menu's **Mods**
+page. `MODDING.md` tells how to make them; `mod_examples/` has three.
+
 ## How it works
 
 - `Project/game/` is the game, hand-written in readable GDScript from the
@@ -65,6 +72,8 @@ hardware would. The rest are listed at the top of `Project/game.gd`.
   that turned them into hardware sprites taken out. It can also draw the
   machine's video RAM as the hardware would (sprites with the hardware's
   shrink tables, text layer, palettes), which is what is compared with MAME.
+- `Project/mods/` reads mods and applies them to the machine and the
+  picture (see `MODDING.md`).
 - `Project/hud/` and `Project/menu/` are what is drawn over the game's
   picture at the window's resolution: a race's HUD, the map of the course
   and the menus.

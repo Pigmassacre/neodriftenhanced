@@ -5,3 +5,6 @@ Tools/__pycache__/
 Builds/
 data/
 Project/.godot/
+
+# mods are the player's, and often made from pictures of the ROM
+/mods/

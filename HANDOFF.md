@@ -536,6 +536,62 @@ what a choice means:
   `--settings=PATH` keeps the options elsewhere, `--menu=PAGE`,
   `--arcade` and `--stage=N` start where the menu would lead.
 
+### Mods
+
+`MODDING.md` is the guide for players; this is how it works. Mods are only
+used by the hand-written game, never in an automated run unless named
+(`--mods=`), so nothing compared with MAME changes.
+
+- **`mods/mods.gd`** (`Mods`) finds the folders (`mods/` beside the game,
+  `user://mods`, `--mod-folder`), reads their `mod.cfg`, and applies them
+  to each new machine (`game.gd`'s `_apply_mods`, from `_start_machine`):
+  `[rom]` patches, then cars, then courses, each seeing what the ones
+  before changed. `Settings.mods_off` holds those turned off; leaving the
+  Mods page with something changed restarts the machine for the menu.
+- **The extra ROM.** What mods add (copies of tables, new maps, packed
+  codes, blocks of tiles) goes to `NeoGeoMachine.extra_rom`, read at
+  `$800000` on (`Mods.Extra`; the memory card's place on a Neo Geo). Only
+  reads through `m.r8`/`r16`/`r32` see it, so what a mod may move must be
+  read that way: `rival.gd`'s waypoints were changed from `rom_u16` for it,
+  and `NeoGeoVideo._load_map` slices blocks from it.
+- **Replaced tiles** (`mods/mod_graphics.gd`, `video/replaced.gdshaderinc`,
+  used by the sprite, ground and text shaders): pictures are cut into the
+  tiles they are made of (read from the ROM at the picture's address), and
+  an index texture gives each tile number (20 bits: the attribute word's
+  bits 4 to 7 above the tile word; text-layer tiles from `$FF000`) a place
+  in an atlas of replacements, at the largest `scale` of the mods. With
+  the `.colours` a picture was saved with, the shader keeps the
+  replacement's difference from the colour it was painted over, put on the
+  colour there now and as much brighter or darker: identical while the
+  colours are as they were, and fades and other cars' colours follow.
+  Tiles empty in the game are never replaced (they are shared).
+- **Finer pictures.** `game.gd` draws `_screen` `_fine` times larger
+  (`size_2d_override`, so the game still draws in game pixels), up to the
+  replacements' scale and the window's pixels per game pixel; the shaders
+  pick the finer pixel from the fraction of `UV`. Without replacements
+  nothing changes.
+- **Cars** (`mods/mod_cars.gd`): the speed fields of a car are changed in
+  place (every difficulty shares them); its ground table, turn table and
+  grip tables are copied, scaled, and pointed at. The original's tables by
+  speed end near the fastest car's top speed, hence `FASTEST`.
+- **Courses** (`mods/mod_courses.gd`): a course's record (`COURSES`) is
+  copied and pointed at, with a new map (the same one for the ground, the
+  codes and the scenery, as the game's are), new block lists for the cells
+  painted (their tiles get new numbers from `$10000`, drawn only from the
+  replacements) and for the cells whose codes are given (packed as
+  `ground.gd` unpacks them), and a new map of signs. The start, the times
+  (every difficulty's clock), the progress bar, the waypoints and the
+  music are changed through their tables by course. A mod course is
+  driven in place of its base (`_course_mod`, from Freeplay or with
+  `arcade=true` always). `tools/export_course.gd` writes a course of the
+  game in that form.
+- **`--dump-graphics`** (`mods/graphics_dump.gd`) saves what is shown, from
+  the object records, the ground's blocks and the text layer's cells.
+
+Not done: scenery of a course's own (the lists by cell are kept as the
+base course has them), cars beyond the three (a car mod takes the place
+of one), sounds, and the HUD of `hud/` (drawn with a font, not pictures).
+
 ## What works, and how it was verified
 
 | Area | State | Evidence |

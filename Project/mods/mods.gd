@@ -19,6 +19,35 @@ const ModCars := preload("res://mods/mod_cars.gd")
 const ModCourses := preload("res://mods/mod_courses.gd")
 
 
+## What mods add to the program ROM, from EXTRA_START on (where a Neo
+## Geo has its memory card; NeoGeoMachine.extra_rom), kept as
+## NeoGeoMachine.rom is: the byte at an address at that address ^ 1.
+const EXTRA_START := 0x800000
+
+
+class Extra:
+	var bytes := PackedByteArray()
+	## The tile number the next new picture of a tile gets, and those
+	## given so far, by the picture's bytes (mods/mod_courses.gd).
+	var next_tile := ModCourses.FIRST_NEW_TILE
+	var tiles_by_picture := {}
+
+	## Adds `data` (bytes as the 68000 sees them) at an even address, which
+	## it returns.
+	func add(data: PackedByteArray) -> int:
+		if bytes.size() & 1:
+			bytes.append(0)
+		var at := bytes.size()
+		bytes.resize(at + data.size() + (data.size() & 1))
+		for index in data.size():
+			bytes[(at + index) ^ 1] = data[index]
+		return EXTRA_START + at
+
+	## Adds words, and returns their address.
+	func add_words(words: Array) -> int:
+		return add(Mods.words_to_bytes(words))
+
+
 ## One mod as found.
 class Mod:
 	## The folder's name, which is how the options remember it.
@@ -92,16 +121,24 @@ static func enabled(turned_off: Array) -> Array[Mod]:
 ## Changes the machine's program ROM as the mods say: their own `[rom]`
 ## sections, their cars and their courses. `course_mod`, when not empty, is
 ## the id of the mod whose course is to be driven in place of the one it
-## is made from (mods/mod_courses.gd).
-static func apply_to_machine(machine: NeoGeoMachine, mods: Array[Mod], course_mod := "") -> void:
-	var extra := ModCourses.Extra.new()
+## is made from (mods/mod_courses.gd); the courses that are to be driven
+## in Arcade are anyway. Returns the tiles the courses' own pictures are
+## made of, for mods/mod_graphics.gd: tile number: [picture, scale].
+static func apply_to_machine(machine: NeoGeoMachine, mods: Array[Mod], course_mod := "") -> Dictionary:
+	var new_tiles := {}
+	var extra := Extra.new()
+	machine.extra_rom = PackedByteArray()
+	# each sees what those before it changed, the ROM as a copy of their
+	# own included
 	for mod in mods:
 		_patch_rom(machine, mod)
-		ModCars.apply(machine, mod)
+		ModCars.apply(machine, mod, extra)
+		machine.extra_rom = extra.bytes
 	for mod in mods:
-		if mod.id == course_mod:
-			ModCourses.apply(machine, mod, extra)
-	machine.extra_rom = extra.bytes
+		if ModCourses.is_course(mod) and (mod.id == course_mod or ModCourses.in_arcade(mod)):
+			ModCourses.apply(machine, mod, extra, new_tiles)
+			machine.extra_rom = extra.bytes
+	return new_tiles
 
 
 ## A mod's `[rom]` section: each key a bus address in hexadecimal, each
@@ -117,14 +154,14 @@ static func _patch_rom(machine: NeoGeoMachine, mod: Mod) -> void:
 		if value is String:
 			bytes = (value as String).replace(" ", "").hex_decode()
 		elif value is int:
-			bytes = _words([value])
+			bytes = words_to_bytes([value])
 		elif value is Array:
-			bytes = _words(value)
+			bytes = words_to_bytes(value)
 		if bytes.is_empty() or not write_rom(machine, address, bytes):
 			push_warning("Mod %s: [rom] %s could not be applied" % [mod.id, key])
 
 
-static func _words(words: Array) -> PackedByteArray:
+static func words_to_bytes(words: Array) -> PackedByteArray:
 	var bytes := PackedByteArray()
 	for word: Variant in words:
 		bytes.append((int(word) >> 8) & 0xFF)
@@ -153,6 +190,11 @@ static func rom_index(address: int) -> int:
 	return -1
 
 
-## Reads a word of the program ROM by bus address.
-static func rom_word(machine: NeoGeoMachine, address: int) -> int:
-	return machine.r16(address)
+## Writes words to the program ROM from bus address `address` on.
+static func write_words(machine: NeoGeoMachine, address: int, words: Array) -> void:
+	write_rom(machine, address, words_to_bytes(words))
+
+
+## Writes a long word (an address) to the program ROM.
+static func write_long(machine: NeoGeoMachine, address: int, value: int) -> void:
+	write_words(machine, address, [(value >> 16) & 0xFFFF, value & 0xFFFF])

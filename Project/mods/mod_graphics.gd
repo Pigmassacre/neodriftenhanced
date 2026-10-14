@@ -25,6 +25,7 @@ extends RefCounted
 ## A tile of the original with nothing in it is never replaced: pictures
 ## share such tiles, and painting one would paint them all.
 
+const ModCourses := preload("res://mods/mod_courses.gd")
 const MOST_SCALE := 4
 const ATLAS_WIDTH := 4096
 const LARGEST_ATLAS := 16384
@@ -53,14 +54,18 @@ var _original_tiles: PackedByteArray
 
 
 ## Collects the replacements of all `mods`. `rom` is the program ROM as the
-## machine has it, `original_tiles` the game's own tiles (tiles.bin).
-func build(mods: Array, rom: PackedByteArray, original_tiles: PackedByteArray) -> void:
+## machine has it, `original_tiles` the game's own tiles (tiles.bin), and
+## `new_tiles` the tiles of the courses' own pictures (tile number:
+## [picture, scale], from Mods.apply_to_machine).
+func build(mods: Array, rom: PackedByteArray, original_tiles: PackedByteArray, new_tiles := {}) -> void:
 	_rom = rom
 	_original_tiles = original_tiles
 	scale = 1
 	for mod: Mods.Mod in mods:
-		if _has_graphics(mod):
+		if _has_graphics(mod) or ModCourses.is_course(mod):
 			scale = maxi(scale, clampi(int(mod.config.get_value("graphics", "scale", 1)), 1, MOST_SCALE))
+	for number: int in new_tiles:
+		_set_tile(number, new_tiles[number][0], new_tiles[number][1], PackedColorArray())
 	for mod: Mods.Mod in mods:
 		if not _has_graphics(mod):
 			continue
