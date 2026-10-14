@@ -32,7 +32,7 @@ var _waiting: Array[int] = []
 func routines() -> Dictionary:
 	return {
 		0x15108: reset,
-		0x15146: func() -> void: set16(STOP_MUSIC, 1),
+		0x15146: stop_music,
 		0x15256: request_from_register,
 		0x15150: send_next,
 	}
@@ -48,6 +48,12 @@ func request_from_register() -> void:
 
 
 func request(sound: int) -> void:
+	if m.log_sounds:
+		print("sound $%04X" % sound)
+	if not m.replaced_sounds.is_empty():
+		m.sounds_taken.append(sound)
+		if m.replaced_sounds.has(sound):
+			return
 	if not _waiting.is_empty() or u16(u32(NEXT_FREE)) != 0:
 		_waiting.append(sound)
 	else:
@@ -100,8 +106,17 @@ func send_next() -> void:
 	set16(FRAMES_TO_WAIT, 2)
 
 
+## $15146
+func stop_music() -> void:
+	set16(STOP_MUSIC, 1)
+	if not m.replaced_sounds.is_empty():
+		m.sounds_taken.append(NeoGeoMachine.STOP_MUSIC)
+
+
 ## $15108: forgets what is asked for, and has the sound hardware reset.
 func reset() -> void:
+	if not m.replaced_sounds.is_empty():
+		m.sounds_taken.append(NeoGeoMachine.RESET_SOUND)
 	set16(FIELD_1032A6, m.d0)
 	set16(SENT_FIRST_BYTE, 0)
 	set16(FRAMES_TO_WAIT, 0)

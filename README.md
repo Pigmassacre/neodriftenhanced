@@ -45,10 +45,12 @@ hardware would. The rest are listed at the top of `Project/game.gd`.
 
 ## Mods
 
-Mods replace pictures (in full colour, up to four times as fine), change the
-cars, make new courses from the game's, and change the program's tables.
-They are folders in `mods/`, turned on and off on the main menu's **Mods**
-page. `MODDING.md` tells how to make them; `mod_examples/` has three.
+Mods replace pictures (in full colour, up to four times as fine), sounds and
+music, change the cars or add more, make new courses from the game's, and
+change the program's tables. They are folders in `mods/`, turned on and off
+on the main menu's **Mods** page. The main menu's **Course editor** makes
+and changes courses with the mouse, and test drives them. `MODDING.md`
+tells how to make mods; `mod_examples/` has a few.
 
 ## How it works
 
@@ -72,8 +74,8 @@ page. `MODDING.md` tells how to make them; `mod_examples/` has three.
   that turned them into hardware sprites taken out. It can also draw the
   machine's video RAM as the hardware would (sprites with the hardware's
   shrink tables, text layer, palettes), which is what is compared with MAME.
-- `Project/mods/` reads mods and applies them to the machine and the
-  picture (see `MODDING.md`).
+- `Project/mods/` reads mods and applies them to the machine, the picture
+  and the sound (see `MODDING.md`); `Project/editor/` is the course editor.
 - `Project/hud/` and `Project/menu/` are what is drawn over the game's
   picture at the window's resolution: a race's HUD, the map of the course
   and the menus.

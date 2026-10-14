@@ -30,6 +30,11 @@ extends RefCounted
 ## - `waypoints.txt`: the way the other cars drive, a line for each point:
 ##   x, y, width and height of the box that counts as reaching it, and the
 ##   speed to slow down to on the way.
+## - `scenery.txt`: the things beside the road, a line for each: x, y and
+##   kind. Without it each place has its cell's scenery, as the game has.
+##
+## Cell numbers past the game's are new cells: they need a picture and
+## codes of their own.
 ##
 ## tools/export_course.gd makes such a mod of a course of the game, to
 ## start from.
@@ -45,6 +50,7 @@ const GROUND_BLOCKS := 4
 const CODE_MAP := 8
 const CODE_CELLS := 0xC
 const SCENERY_MAP := 0x10
+const SCENERY_LISTS := 0x14
 const SIGNS := 0x18
 ## By course: the player's car's start ($19 words from OWN_SURFACE, see
 ## car.gd), and the other cars' ($16 words each, three).
@@ -68,11 +74,15 @@ const WAYPOINT_COUNTS := 0x2103A
 const FIRST_WAYPOINTS := 0x21048
 const FIRST_WAYPOINT_BYTES := 8
 const COURSE_MUSIC := 0xF8C2
+## The kinds of scenery: their count, then their routines.
+const KINDS_OF_SCENERY := 0x2E794
 ## Packed codes: a byte below $80 is a code, $80 ends, any other byte is a
 ## count of the code after it (game/ground.gd).
 const PACKED_END := 0x80
 const CELL_SIZE := 256
 const CODES_ACROSS := 32
+## The most cells a course of a mod's may have.
+const MOST_CELLS := 4096
 ## The tile numbers a course's own pictures are given: past the game's.
 const FIRST_NEW_TILE := 0x10000
 const LAST_NEW_TILE := 0xFEFFF
@@ -122,16 +132,30 @@ static func apply(machine: NeoGeoMachine, mod: Mods.Mod, extra: Mods.Extra, new_
 		pointers.append(machine.r32(record + index * 4))
 
 	var map := _read_grid(mod, folder.path_join("map.txt"))
+	var cells_needed := 0
 	if not map.is_empty():
 		var address := extra.add_words(_grid_words(map))
 		pointers[GROUND_MAP / 4] = address
 		pointers[CODE_MAP / 4] = address
 		pointers[SCENERY_MAP / 4] = address
 		machine.extra_rom = extra.bytes
+		for row in map:
+			for cell in row:
+				cells_needed = maxi(cells_needed, cell + 1)
+	if cells_needed > MOST_CELLS:
+		push_warning("Mod %s: map.txt has cells past %d" % [mod.id, MOST_CELLS - 1])
+		return
 	var scale := clampi(int(config.get_value("graphics", "scale", 1)), 1, 4)
 	pointers[GROUND_BLOCKS / 4] = _cells(machine, mod, folder.path_join("cells"), pointers[GROUND_BLOCKS / 4],
-			extra, new_tiles, scale)
-	pointers[CODE_CELLS / 4] = _codes(machine, mod, folder.path_join("codes"), pointers[CODE_CELLS / 4], extra)
+			extra, new_tiles, scale, cells_needed)
+	pointers[CODE_CELLS / 4] = _codes(machine, mod, folder.path_join("codes"), pointers[CODE_CELLS / 4], extra,
+			cells_needed)
+	var scenery := _read_rows(mod, folder.path_join("scenery.txt"))
+	if FileAccess.file_exists(folder.path_join("scenery.txt")):
+		var ground_map := pointers[GROUND_MAP / 4]
+		var lists := _scenery(machine, mod, scenery, machine.r16(ground_map), machine.r16(ground_map + 2), extra)
+		pointers[SCENERY_MAP / 4] = lists[0]
+		pointers[SCENERY_LISTS / 4] = lists[1]
 	var signs := _read_grid(mod, folder.path_join("signs.txt"))
 	if not signs.is_empty():
 		pointers[SIGNS / 4] = extra.add(_grid_bytes(signs))
@@ -188,7 +212,7 @@ static func _read_rows(mod: Mods.Mod, path: String) -> Array[PackedInt32Array]:
 		for value in line.split(" ", false):
 			row.append(value.to_int())
 		rows.append(row)
-	if rows.is_empty():
+	if rows.is_empty() and path.get_file() != "scenery.txt":
 		push_warning("Mod %s: %s is empty" % [mod.id, path.get_file()])
 	return rows
 
@@ -224,19 +248,21 @@ static func _grid_bytes(rows: Array[PackedInt32Array]) -> PackedByteArray:
 ## a block of 16 by 16 tiles, column by column, each a tile word and an
 ## attribute word (the tile's number above 16 bits in its bits 4 to 7).
 static func _cells(machine: NeoGeoMachine, mod: Mods.Mod, folder: String, blocks: int,
-		extra: Mods.Extra, new_tiles: Dictionary, scale: int) -> int:
+		extra: Mods.Extra, new_tiles: Dictionary, scale: int, needed: int) -> int:
 	var files := _numbered_pngs(folder)
-	if files.is_empty():
+	var game_count := machine.r16(blocks)
+	if files.is_empty() and needed <= game_count:
 		return blocks
-	var count := machine.r16(blocks)
+	var count := maxi(game_count, needed)
 	var list: Array[int] = [count]
 	for cell in count:
-		var block := machine.r32(blocks + 2 + cell * 4)
+		# a new cell without a picture of its own looks like the first
+		var block := machine.r32(blocks + 2 + (cell if cell < game_count else 0) * 4)
 		list.append_array([block >> 16, block & 0xFFFF])
 	var size := 16 * scale
 	for cell: int in files:
 		if cell >= count:
-			push_warning("Mod %s: the course has no cell %d" % [mod.id, cell])
+			push_warning("Mod %s: the map has no cell %d" % [mod.id, cell])
 			continue
 		var image := Image.load_from_file(files[cell])
 		if image == null or image.get_size() != Vector2i(CELL_SIZE, CELL_SIZE) * scale:
@@ -271,18 +297,20 @@ static func _tile_number(piece: Image, extra: Mods.Extra, new_tiles: Dictionary,
 ## The list of the cells' codes with those the mod gives put in: for each
 ## cell the address of the addresses of its four blocks of 16 by 16 codes
 ## (top left, top right, bottom left, bottom right), each packed.
-static func _codes(machine: NeoGeoMachine, mod: Mods.Mod, folder: String, cells: int, extra: Mods.Extra) -> int:
+static func _codes(machine: NeoGeoMachine, mod: Mods.Mod, folder: String, cells: int, extra: Mods.Extra,
+		needed: int) -> int:
 	var files := _numbered_pngs(folder)
-	if files.is_empty():
+	var game_count := machine.r16(cells)
+	if files.is_empty() and needed <= game_count:
 		return cells
-	var count := machine.r16(cells)
+	var count := maxi(game_count, needed)
 	var list: Array[int] = [count]
 	for cell in count:
-		var blocks := machine.r32(cells + 2 + cell * 4)
+		var blocks := machine.r32(cells + 2 + (cell if cell < game_count else 0) * 4)
 		list.append_array([blocks >> 16, blocks & 0xFFFF])
 	for cell: int in files:
 		if cell >= count:
-			push_warning("Mod %s: the course has no cell %d" % [mod.id, cell])
+			push_warning("Mod %s: the map has no cell %d" % [mod.id, cell])
 			continue
 		var image := Image.load_from_file(files[cell])
 		if image == null or image.get_size() != Vector2i(CODES_ACROSS, CODES_ACROSS):
@@ -300,6 +328,41 @@ static func _codes(machine: NeoGeoMachine, mod: Mods.Mod, folder: String, cells:
 		list[1 + cell * 2] = address >> 16
 		list[2 + cell * 2] = address & 0xFFFF
 	return extra.add_words(list)
+
+
+## Scenery of the mod's own: a map for the scenery with a number for each
+## place, and a list of what stands there for each number (four bytes each:
+## kind as a word, x and y within the cell, ended by a kind of 0), all
+## empty places sharing one. Returns their addresses.
+static func _scenery(machine: NeoGeoMachine, mod: Mods.Mod, things: Array[PackedInt32Array], across: int,
+		down: int, extra: Mods.Extra) -> Array[int]:
+	var kinds := machine.r16(KINDS_OF_SCENERY)
+	var by_place := {}
+	for thing in things:
+		if thing.size() < 3 or thing[2] <= 0 or thing[2] >= kinds:
+			push_warning("Mod %s: scenery.txt: %s is no thing" % [mod.id, str(thing)])
+			continue
+		var column := posmod(thing[0] >> 8, across)
+		var row := thing[1] >> 8
+		if row < 0 or row >= down:
+			continue
+		var place := row * across + column
+		var entries: PackedByteArray = by_place.get(place, PackedByteArray())
+		entries.append_array(Mods.words_to_bytes([thing[2]]))
+		entries.append(thing[0] & 0xFF)
+		entries.append(thing[1] & 0xFF)
+		by_place[place] = entries
+	var empty := extra.add(Mods.words_to_bytes([0]))
+	var map_words: Array[int] = [across, down]
+	var list_words: Array[int] = [across * down]
+	for place in across * down:
+		map_words.append(place)
+		var address := empty
+		if by_place.has(place):
+			address = extra.add((by_place[place] as PackedByteArray) + Mods.words_to_bytes([0]))
+		list_words.append_array([address >> 16, address & 0xFFFF])
+	var addresses: Array[int] = [extra.add_words(map_words), extra.add_words(list_words)]
+	return addresses
 
 
 ## Codes packed as the game unpacks them (game/ground.gd).

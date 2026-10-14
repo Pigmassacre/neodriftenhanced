@@ -5,6 +5,9 @@ extends RefCounted
 ##
 ##     [car]
 ##     replaces = 1          ; which car: 0, 1 or 2, as the car choice has them
+##     adds = false          ; true: a car of its own, chosen in place of
+##                           ; that one with up and down on the car choice
+##     name = "Lancer Evo"   ; its name there
 ##     top_speed = 1.1       ; on every surface and as the car wears down
 ##     acceleration = 1.2
 ##     braking = 1.0
@@ -46,11 +49,20 @@ const SPEED_WORDS := 0x19
 const DAMAGE_STAGES := 5
 
 
+static func adds_car(mod: Mods.Mod) -> bool:
+	return mod.config.has_section("car") and bool(mod.config.get_value("car", "adds", false))
+
+
+## The car it changes, or the car a car it adds is made from.
+static func car_of(mod: Mods.Mod) -> int:
+	return int(mod.config.get_value("car", "replaces", -1))
+
+
 static func apply(machine: NeoGeoMachine, mod: Mods.Mod, extra: Mods.Extra) -> void:
 	if not mod.config.has_section("car"):
 		return
 	var config := mod.config
-	var car := int(config.get_value("car", "replaces", -1))
+	var car := car_of(mod)
 	if car < 0 or car >= CARS:
 		push_warning("Mod %s: [car] replaces must be 0, 1 or 2" % mod.id)
 		return

@@ -11,11 +11,14 @@ A mod can:
 
 - **replace pictures**: any sprite, ground, letter or HUD digit, in full
   colour and up to four times as fine as the game's pixels;
-- **change a car**: speed, acceleration, braking, grip, turning, and its
-  looks;
+- **change a car or add one**: speed, acceleration, braking, grip,
+  turning, and its looks;
 - **make a course**: from one of the game's, with its map of cells
-  rearranged, cells repainted, the ground changed, a new start, other
-  times, checkpoints and the other cars' route. It is listed in Freeplay;
+  rearranged, cells repainted, the ground changed, scenery of its own, a
+  new start, other times, checkpoints and the other cars' route. It is
+  listed in Freeplay. The **Course editor** of the main menu makes and
+  changes courses with the mouse;
+- **replace sounds and music**;
 - **change anything else** in the program ROM's tables, byte by byte.
 
 Mods are applied in the order of their folder names. Where two change the
@@ -23,10 +26,11 @@ same thing, the later one wins: name a folder `zz_...` to put it last.
 The best times are kept apart while a mod that changes the play (a car, a
 course, `[rom]`) is on.
 
-`mod_examples/` has three small mods to copy into `mods/`:
+`mod_examples/` has small mods to copy into `mods/`:
 
 - `hd_go_sign` replaces a picture.
 - `tuned_cars` changes a car.
+- `extra_car` adds a car.
 - `relaxed_stage` makes a course.
 
 ## mod.cfg
@@ -120,7 +124,55 @@ car choice, the car on the course, and its name are all pictures.
 Two car mods for the same car: the later one wins. Turn one off on the
 Mods page.
 
+### Adding a car
+
+With `adds=true` the car is one more, and the game's own stays:
+
+```ini
+[car]
+replaces=0                 ; the car it is made from
+adds=true
+name="Celica GT-Four RC"   ; as the car choice names it
+top_speed=1.15
+acceleration=1.4
+```
+
+On the car choice, up and down go through the game's car and those added
+in its place; the name of the one chosen shows over the car. Any number
+may be added to each of the three. An added car's `[rom]` section, if it
+has one, is changed only while that car is chosen. It looks like the car
+it is made from: pictures replace tiles everywhere, so they cannot tell
+the two apart.
+
 ## Courses
+
+The easiest way is the **Course editor** on the main menu: choose a course
+of the game to start from, or a course to change. It keeps what you make
+as a mod in the game's user folder (`mods/course_...`), and **Test drive**
+saves it and drives it, then comes back. Its tools, picked with the
+buttons along the top or the keys 1 to 6:
+
+- **Cells**: put cells on the map (each comes with its scenery). Right
+  click takes the cell under the mouse. **Give the place a cell of its
+  own** makes a copy only that place shows, to paint its ground alone or
+  its picture in a paint program (`course/cells/NUMBER.png`).
+- **Ground**: paint the ground codes (G shows them on any tool). A cell's
+  codes are the same wherever the cell is.
+- **Scenery**: put things beside the road, drag them, right click or
+  Delete takes them away.
+- **Route**: the boxes the other cars drive for. Click to choose, drag to
+  move, drag the corner to size; clicking off a box adds one after the
+  chosen.
+- **Start**: click puts the start, Shift and click faces the car; drag
+  the lines of the bar that shows how far along the car is.
+- **Signs**: the signs of the turns ahead, by place.
+
+The wheel zooms, the middle button (or Space and the left) drags the
+view, Ctrl and the wheel goes through the palette, Ctrl+Z and Ctrl+Y undo
+and redo, Ctrl+S saves. Name, times, music and Arcade are at the side.
+
+What the editor writes is what follows: a course can be made or changed
+by hand just as well.
 
 A course is a map of cells. Each cell is 256 by 256 pixels, and has its
 picture, its ground codes (what a car finds there) and its scenery. The
@@ -142,7 +194,7 @@ base=1                 ; the course it is made from
 name="Stage 1, my way" ; as Freeplay lists it
 arcade=false           ; true: also driven in place of course 1 in Arcade
 start=[384, 16000]     ; where the car starts, in pixels of the course
-facing=341.37          ; which way it faces then, in degrees
+facing=341.37          ; which way it faces, in degrees: 0 right, 90 down, 270 up
 time=[40.0, 23.0]      ; seconds at the start, then gained at each checkpoint
 progress=[16000, 8832, 1152]  ; y of the start, each checkpoint and the finish,
                               ; for the bar at the right
@@ -173,17 +225,43 @@ moves the other cars' start. In the `course/` folder:
 - `signs.txt` is the map of the signs that come up (the turns ahead): a
   number for each place, 0 for none.
 - `waypoints.txt` is the way the other cars drive. Each line is a box they
-  aim for: x, y, width, height, and the speed to slow down to on the way
-  there.
+  aim for: its middle (x, y), width, height, and the speed to slow down to
+  on the way there.
+- `scenery.txt` is the things beside the road (trees, spectators,
+  barrels), a line for each: x, y and kind, where x and y are the foot of
+  the thing. Without it, each cell's scenery goes with it wherever the
+  map puts it, as in the game. The exporter writes it with `--scenery`.
 
-A cell's scenery (trees, spectators, barrels) goes with it wherever the
-map puts it. Scenery of your own is for the level editor still to come.
+A cell number past the course's last (255) is a new cell. It needs its
+picture in `cells/` and its codes in `codes/`.
 
 Driving a mod's course from the command line:
 
 ```sh
 Godot/Godot_v4.7.2-stable_linux.x86_64 --path Project -- --stage=1 --mods=my_course --course-mod=my_course
 ```
+
+## Sounds and music
+
+Put files named by the sound's number in the mod's `sounds/` folder, as
+`.ogg`, `.wav` or `.mp3`:
+
+```
+sounds/24.ogg    ; the music of stage 1
+sounds/D4.wav    ; a sound of the race
+```
+
+The numbers are hexadecimal, as the game prints the sounds it asks for
+when run with `--log-sounds`:
+
+```sh
+Godot/Godot_v4.7.2-stable_linux.x86_64 --path Project -- --log-sounds
+```
+
+The music of the courses is `21` (practice) and `24` to `29` (stages 1 to
+6). `20` to `3F` are music, which plays round and round until other music
+is asked for or the music stops; everything else plays once. The music
+and effects volumes of the options apply to them.
 
 ## Anything else: [rom]
 
@@ -206,3 +284,6 @@ address (the `const` at the top of each file), with what they hold.
 - `--no-mods` uses none.
 - `--mod-folder=PATH` looks in another folder too.
 - `--course-mod=ID` with `--stage=N` drives a mod's course.
+- `--editor=N` opens the course editor on a new course made from course
+  N, and `--editor=FOLDER` on the course of that mod.
+- `--log-sounds` prints every sound the game asks for.

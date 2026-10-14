@@ -160,6 +160,21 @@ var sound_reply := 0
 ## Sound commands written this frame, and when: main CPU cycles since the frame began.
 var sound_log: Array[int] = []
 var sound_log_times: Array[int] = []
+## Sounds that mods replace (mods/mod_sounds.gd): the game's requests for
+## them are not sent to the sound board. While there are any, every request
+## is kept in order in `sounds_taken`, with STOP_MUSIC and RESET_SOUND for
+## the music stopped and all sound stopped. `log_sounds` prints every request.
+var replaced_sounds := {}
+var sounds_taken: Array[int] = []
+var log_sounds := false
+const STOP_MUSIC := -1
+const RESET_SOUND := -2
+## Cars that mods add (Mods.CarVariant): by car, those that may be chosen
+## in its place; by car, which is chosen (0 the game's own); and whether
+## the car choice is waiting for a choice this frame.
+var car_variants := {}
+var chosen_variants := {}
+var choosing_car := false
 
 ## Return address of a routine called by hand-written code: never a block.
 const CALL_RETURN := 0xFFFFFE

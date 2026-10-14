@@ -230,6 +230,7 @@ func car_arriving() -> void:
 
 ## $15D0A
 func choosing() -> void:
+	m.choosing_car = true
 	set16(FRAMES_LEFT, u16(FRAMES_LEFT) - 1)
 	scroll_backdrop()
 	count_down()
@@ -382,6 +383,13 @@ func read_joystick() -> void:
 			set16(CAR, (u16(CAR) + 1) % CAR_COUNT)
 			set16(SLIDE_LEFT, SLIDE)
 			set8(STATE, TO_NEXT)
+			return
+		if joystick & (Joystick.UP | Joystick.DOWN) and m.car_variants.has(u16(CAR)):
+			# up and down: the cars mods add in this one's place (Mods.CarVariant)
+			var count: int = m.car_variants[u16(CAR)].size() + 1
+			var now: int = m.chosen_variants.get(u16(CAR), 0)
+			Mods.choose_car(m, u16(CAR), posmod(now + (1 if joystick & Joystick.DOWN else -1), count))
+			_request_sound(SOUND_MOVE)
 			return
 		if joystick & Joystick.BUTTON_A == 0:
 			return

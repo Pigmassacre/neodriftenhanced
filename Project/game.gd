@@ -81,6 +81,7 @@ const P1_BITS := {"up": 1, "down": 2, "left": 4, "right": 8, "a": 16, "b": 32, "
 
 const GameFlow := preload("res://game/game_flow.gd")
 const ModCourses := preload("res://mods/mod_courses.gd")
+const CarChoice := preload("res://game/car_choice.gd")
 ## What the original's main loop is at ($100426): its attract mode, the
 ## title with a credit in, "how to play", the entry of a name, and the game.
 const MAIN_ATTRACT: Array[int] = [0, 1]
@@ -107,7 +108,7 @@ const PRESS_TICKS := 3
 
 ## What the player is at: the game, a menu over the attract mode, a game
 ## being got ready behind a black screen, or a menu over a stopped game.
-enum {PLAYING, IN_MENU, STARTING, PAUSED}
+enum {PLAYING, IN_MENU, STARTING, PAUSED, EDITING}
 
 var machine: RefCounted
 var frame := 0
@@ -162,6 +163,17 @@ var _course_mod := ""
 ## True when the mods have been turned on or off since the machine started.
 var _mods_changed := false
 var _dump: RefCounted
+## The course editor while it is open, and the folder of the course it
+## edits while that is test driven (to go back to it after), or "".
+var _editor: CourseEditor
+var _editing := ""
+## Print every sound the game asks for (for the sounds of mods).
+var _log_sounds := false
+## Says which car is chosen on the car choice when mods add cars.
+var _car_label: Label
+const CAR_NAMES := ["Celica", "Lancer", "Impreza"]
+## What plays the sounds of mods (mods/mod_sounds.gd).
+var _mod_sounds := preload("res://mods/mod_sounds.gd").new()
 
 var _settings := Settings.new()
 ## Null when the run is automated.
@@ -206,9 +218,11 @@ var _shot_tick := 0
 
 func _ready() -> void:
 	_snapshot = MachineLoader.repo_dir().path_join("data/game/start.snapshot")
+	add_child(_mod_sounds)
 	var automated := false
 	var menu_page := ""
 	var start_arcade := false
+	var editor_course := ""
 	var seedlog := ""
 	var use_sound := true
 	for arg in OS.get_cmdline_user_args():
@@ -282,6 +296,11 @@ func _ready() -> void:
 			_use_mods = false
 		elif arg.begins_with("--dump-graphics="):
 			_dump = preload("res://mods/graphics_dump.gd").new(arg.trim_prefix("--dump-graphics="))
+		elif arg == "--log-sounds":
+			_log_sounds = true
+		elif arg.begins_with("--editor"):
+			# --editor=FOLDER edits that mod's course, --editor=N a new one made from course N
+			editor_course = arg.trim_prefix("--editor").trim_prefix("=")
 	var with_menu := not _comparing and (not automated or menu_page != "" or start_arcade or _stage >= 0)
 	if not automated:
 		_settings.load_file()
@@ -337,7 +356,13 @@ func _ready() -> void:
 		_apply_window()
 	_apply_settings("picture")
 	if _menu != null:
-		if start_arcade or _stage >= 0:
+		if editor_course != "":
+			_enter_menu()
+			if editor_course.is_valid_int():
+				_open_editor("", int(editor_course))
+			else:
+				_open_editor(editor_course)
+		elif start_arcade or _stage >= 0:
 			_start_game(_stage, _course_mod)
 		else:
 			_enter_menu()
@@ -355,6 +380,7 @@ func _start_machine() -> bool:
 	machine = MachineLoader.create(_hand_written, _program)
 	if machine == null:
 		return false
+	machine.log_sounds = _log_sounds
 	_apply_mods()
 	if not _from_snapshot:
 		var kept := PackedByteArray()
@@ -394,6 +420,7 @@ func _set_up_menu() -> void:
 	_menu.arcade_chosen.connect(_start_game.bind(-1))
 	_menu.stage_chosen.connect(_start_game)
 	_menu.course_chosen.connect(func(mod: String, stage: int) -> void: _start_game(stage, mod))
+	_menu.editor_chosen.connect(_open_editor)
 	_menu.resumed.connect(_resume)
 	_menu.main_menu_chosen.connect(_to_main_menu.bind("main"))
 	_menu.quit_chosen.connect(_quit)
@@ -417,6 +444,7 @@ func _apply_settings(section: String) -> void:
 			AudioServer.set_bus_mute(0, _settings.volume <= 0.0)
 			if sound != null:
 				sound.set_volumes(_settings.music, _settings.effects)
+			_mod_sounds.set_volumes(_settings.music, _settings.effects)
 		"mods":
 			_mods_changed = true
 		"game":
@@ -473,7 +501,8 @@ func _start_game(stage: int, course_mod := "") -> void:
 	_menu.cover(title)
 
 
-## Back to the main menu, over the attract mode from its beginning.
+## Back to the main menu, over the attract mode from its beginning; or,
+## after a test drive, back to the course editor.
 func _to_main_menu(page: String) -> void:
 	_stage = -1
 	_course_mod = ""
@@ -483,9 +512,51 @@ func _to_main_menu(page: String) -> void:
 		sound.muted = not shot_frames.is_empty()
 	_enter_menu()
 	_refresh()
+	if _editing != "":
+		_open_editor(_editing)
+		return
 	_menu.open("main")
 	if page != "main":
 		_menu.go(page)
+
+
+## Opens the course editor (editor/course_editor.gd) on the course of the
+## mod in `path`, or on a new course made from the game's course `base`.
+func _open_editor(path: String, base := 1) -> void:
+	_state = EDITING
+	_menu.close()
+	if sound != null:
+		sound.muted = true
+	_editor = CourseEditor.new()
+	# over the picture and its CRT glass alike
+	var layer := CanvasLayer.new()
+	layer.layer = 20
+	layer.add_child(_editor)
+	add_child(layer)
+	_editor.open(path, base)
+	_editing = _editor.folder
+	_editor.test_drive.connect(func(mod_id: String, stage: int) -> void:
+		_close_editor()
+		# a course driven is a course turned on, and its pictures are made anew
+		if mod_id in _settings.mods_off:
+			_settings.mods_off.erase(mod_id)
+			_settings.save_file()
+		if not _named_mods.is_empty() and not mod_id in _named_mods:
+			_named_mods.append(mod_id)
+		_graphics_key = ""
+		_start_game(stage, mod_id))
+	_editor.closed.connect(func() -> void:
+		_close_editor()
+		_editing = ""
+		_state = IN_MENU
+		_menu.open("main")
+		_menu.go("editor"))
+
+
+func _close_editor() -> void:
+	if _editor != null:
+		_editor.get_parent().queue_free()
+		_editor = null
 
 
 ## The main menu: the machine, just started, is run to MENU_FRAME of its
@@ -516,11 +587,13 @@ func _run_to_menu_picture() -> void:
 
 func _pause() -> void:
 	_state = PAUSED
+	_mod_sounds.set_paused(true)
 	_menu.open("pause")
 
 
 func _resume() -> void:
 	_state = PLAYING
+	_mod_sounds.set_paused(false)
 	_choose_hud()
 	_time = 0.0
 	_menu.close()
@@ -545,6 +618,8 @@ func _apply_mods() -> void:
 			if (mod.id in _named_mods) if not _named_mods.is_empty() else not mod.id in _settings.mods_off:
 				_mods.append(mod)
 	var new_tiles := Mods.apply_to_machine(machine, _mods, _course_mod)
+	_mod_sounds.load_mods(_mods, machine)
+	_mod_sounds.set_paused(false)
 	var key := ",".join(_mods.map(func(mod: Mods.Mod) -> String: return mod.id)) + "/" + _course_mod
 	if key == _graphics_key:
 		return
@@ -685,6 +760,16 @@ func _set_up_screen() -> void:
 	_hud = RaceHud.new()
 	_hud.machine = machine
 	_picture.add_child(_hud)
+	_car_label = Label.new()
+	_car_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_car_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	_car_label.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.07))
+	var backing := StyleBoxFlat.new()
+	backing.bg_color = Color(0.02, 0.03, 0.07, 0.7)
+	backing.set_corner_radius_all(6)
+	_car_label.add_theme_stylebox_override("normal", backing)
+	_car_label.visible = false
+	_picture.add_child(_car_label)
 
 
 ## Makes the picture as high as the window, or as wide when the window is
@@ -759,14 +844,14 @@ func _unbent(at: Vector2) -> Vector2:
 
 func _bend_mouse(event: InputEvent) -> void:
 	var mouse := event as InputEventMouse
-	if mouse != null and _crt:
+	if mouse != null and _crt and _state != EDITING:
 		mouse.position = _unbent(mouse.position)
 		mouse.global_position = _unbent(mouse.global_position)
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
-	if key == null or not key.pressed or key.echo or _picture == null:
+	if key == null or not key.pressed or key.echo or _picture == null or _state == EDITING:
 		return
 	match key.physical_keycode:
 		KEY_F2:
@@ -892,7 +977,7 @@ func _process(delta: float) -> void:
 			else:
 				set_process(true)
 		return
-	if _state == PAUSED:
+	if _state == PAUSED or _state == EDITING:
 		return
 	if _state == IN_MENU:
 		_run_to_menu_picture()
@@ -924,6 +1009,31 @@ func _refresh(again := false) -> void:
 	var in_race := video.hud_shown and _state != IN_MENU
 	_map.refresh(in_race)
 	_hud.refresh(in_race)
+	_show_car_variant()
+
+
+## On the car choice, the name of the car chosen when mods add cars in
+## its place, and that up and down choose another.
+func _show_car_variant() -> void:
+	if _car_label == null:
+		return
+	var car: int = machine.ram.decode_u16(CarChoice.CAR & 0xFFFF)
+	_car_label.visible = machine.choosing_car and machine.car_variants.has(car) and _state != IN_MENU
+	if not _car_label.visible:
+		return
+	var chosen: int = machine.chosen_variants.get(car, 0)
+	var variants: Array = machine.car_variants[car]
+	var name: String = CAR_NAMES[car] if chosen == 0 else (variants[chosen - 1] as Mods.CarVariant).name
+	_car_label.text = "▲  %s  ▼\n%d of %d, up and down for another" % [name, chosen + 1, variants.size() + 1]
+	var height := _picture.size.y
+	_car_label.add_theme_font_size_override("font_size", maxi(int(height * 0.04), 12))
+	_car_label.add_theme_constant_override("outline_size", maxi(int(height * 0.008), 2))
+	var backing := _car_label.get_theme_stylebox("normal") as StyleBoxFlat
+	backing.content_margin_left = height * 0.03
+	backing.content_margin_right = height * 0.03
+	_car_label.size = Vector2.ZERO
+	_car_label.reset_size()
+	_car_label.position = Vector2((_picture.size.x - _car_label.size.x) / 2.0, height * 0.66)
 
 
 func _step() -> void:
@@ -966,7 +1076,13 @@ func _step() -> void:
 	if not _topup.is_empty():
 		machine.top_up(_topup[0], _topup[1], _topup[2])
 	var started := Time.get_ticks_usec()
+	machine.choosing_car = false
 	machine.run_frame()
+	if not machine.sounds_taken.is_empty():
+		if sound != null and not silent:
+			_mod_sounds.play_taken(machine)
+		else:
+			machine.sounds_taken.clear()
 	var took := (Time.get_ticks_usec() - started) / 1000.0
 	_machine_ms += took
 	_machine_ms_peak = maxf(_machine_ms_peak, took)

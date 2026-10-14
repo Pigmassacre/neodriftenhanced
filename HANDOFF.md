@@ -584,13 +584,44 @@ used by the hand-written game, never in an automated run unless named
   music are changed through their tables by course. A mod course is
   driven in place of its base (`_course_mod`, from Freeplay or with
   `arcade=true` always). `tools/export_course.gd` writes a course of the
-  game in that form.
+  game in that form. With a `scenery.txt` the course gets a map for its
+  scenery of its own, numbering every place, and a list for each place
+  (`_scenery`); cell numbers past the game's 256 grow the block and code
+  lists (new cells without files look like cell 0).
+- **`CourseData`** (`mods/course_data.gd`) is a course as plain data, read
+  from the ROM and a mod's folder and written back: the exporter and the
+  editor share it. It also draws cells and pictures of the ROM in a
+  course's colours.
+- **The course editor** (`editor/course_editor.gd`, its view
+  `editor/course_view.gd`) is opened from the menu's "editor" page
+  (`Menu.editor_chosen`) or `--editor=`; `game.gd` puts it in a
+  `CanvasLayer` over everything and stops the machine (`EDITING`). It runs
+  on a machine of its own, untouched by mods. A test drive saves, turns
+  the mod on and starts its course; going back to the menu from that
+  (`_to_main_menu`) opens the editor again while `_editing` is set. Undo
+  keeps the values a step changed from (`_step`, by key such as `map`,
+  `scenery`, `codes:N`).
+- **Sounds** (`mods/mod_sounds.gd`): `SoundRequests.request` keeps the
+  numbers mods replace from the sound board; while any are replaced it
+  lists every request in `NeoGeoMachine.sounds_taken`, in order, with
+  markers for the music stopped and the sound reset, and `game.gd` hands
+  them to `mod_sounds.gd` after each frame. Music is $20 to $3F by
+  observation (courses $21, $24 to $29; $22 and $23 around the car choice
+  and the start); requests below $20 are the driver's commands and end a
+  mod's music too.
+- **Added cars** (`[car] adds=true`): `Mods._add_car` applies the mod with
+  `write_rom` recording instead of writing (`_recorded`), and keeps the
+  bytes as a `CarVariant`; `Mods.choose_car` writes them in and out of the
+  ROM. `car_choice.gd`'s `read_joystick` takes up and down for it (only
+  with variants, so the original's behaviour is untouched), sets
+  `NeoGeoMachine.choosing_car`, and `game.gd` labels the choice. An added
+  car looks like its base: tiles are replaced for every car alike.
 - **`--dump-graphics`** (`mods/graphics_dump.gd`) saves what is shown, from
   the object records, the ground's blocks and the text layer's cells.
 
-Not done: scenery of a course's own (the lists by cell are kept as the
-base course has them), cars beyond the three (a car mod takes the place
-of one), sounds, and the HUD of `hud/` (drawn with a font, not pictures).
+Not done: pictures of an added car's own (it would need copies of the
+car's picture records with tiles of their own), and the HUD of `hud/`
+(drawn with a font, not pictures).
 
 ## What works, and how it was verified
 

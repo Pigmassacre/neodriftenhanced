@@ -25,6 +25,9 @@ signal main_menu_chosen
 signal quit_chosen
 ## A setting of this section of Settings.KEPT (or "controls") was changed.
 signal changed(section: String)
+## The course editor, on the course of the mod at `path`, or with `path`
+## empty on a new course made from the game's course `base`.
+signal editor_chosen(path: String, base: int)
 ## A page has been left for the one before it.
 signal page_left(page: String)
 
@@ -70,7 +73,7 @@ const ModCourses := preload("res://mods/mod_courses.gd")
 const PAGE_NAMES := {
 	"main": "Main menu", "pause": "Paused", "freeplay": "Freeplay", "options": "Options",
 	"picture": "Picture", "sound": "Sound", "controls": "Controls", "game": "Game",
-	"mods": "Mods",
+	"mods": "Mods", "editor": "Course editor",
 }
 ## What a row is for, by its name.
 const ABOUT := {
@@ -78,6 +81,7 @@ const ABOUT := {
 	"Freeplay": "Any one stage, on its own.",
 	"Options": "Picture, sound, controls and the game.",
 	"Mods": "Turn on and off what has been added to the game.",
+	"Course editor": "Make courses of your own, and change those made before.",
 	"Quit to desktop": "Close the game.",
 	"Resume": "Back to the race.",
 	"Quit to main menu": "Leave this game for the main menu.",
@@ -324,7 +328,22 @@ func _show(arriving := true) -> void:
 			_item("Freeplay", go.bind("freeplay"))
 			_item("Options", go.bind("options"))
 			_item("Mods", go.bind("mods"))
+			_item("Course editor", go.bind("editor"))
 			_item("Quit to desktop", func() -> void: quit_chosen.emit())
+		"editor":
+			_title.text = "Course editor"
+			_page_about = "Courses are kept as mods, in %s." % ProjectSettings.globalize_path("user://mods")
+			for mod in Mods.find_all():
+				if ModCourses.is_course(mod):
+					var button := _item("Change: " + ModCourses.name_of(mod),
+							func() -> void: editor_chosen.emit(mod.path, ModCourses.base_of(mod)))
+					button.set_meta("about", "The course of the mod %s, in %s." % [mod.name, mod.path])
+			for stage in STAGES:
+				var button := _item("New, from the practice stage" if stage == 0 else "New, from stage %d" % stage,
+						func() -> void: editor_chosen.emit("", stage))
+				button.set_meta("about", "A new course, a copy of %s to start from." %
+						("the practice stage" if stage == 0 else "stage %d" % stage))
+			_item("Back", _back)
 		"pause":
 			_title.text = "Paused"
 			keys = "↑↓  Choose      Enter  OK      Esc  Resume"

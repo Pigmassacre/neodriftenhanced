@@ -48,6 +48,20 @@ class Extra:
 		return add(Mods.words_to_bytes(words))
 
 
+## A car a mod adds (`[car] adds = true`): one of the game's three
+## changed, chosen on the car choice in its place, with up and down.
+class CarVariant:
+	var car := 0
+	var name := ""
+	var mod_id := ""
+	## The bytes of NeoGeoMachine.rom it changes, each [index, new, old].
+	var writes: Array = []
+
+
+## While not null, `write_rom` keeps what it would write here: [index, byte].
+static var _recorded: Variant = null
+
+
 ## One mod as found.
 class Mod:
 	## The folder's name, which is how the options remember it.
@@ -128,9 +142,14 @@ static func apply_to_machine(machine: NeoGeoMachine, mods: Array[Mod], course_mo
 	var new_tiles := {}
 	var extra := Extra.new()
 	machine.extra_rom = PackedByteArray()
+	machine.car_variants = {}
+	machine.chosen_variants = {}
 	# each sees what those before it changed, the ROM as a copy of their
 	# own included
 	for mod in mods:
+		if ModCars.adds_car(mod):
+			_add_car(machine, mod, extra)
+			continue
 		_patch_rom(machine, mod)
 		ModCars.apply(machine, mod, extra)
 		machine.extra_rom = extra.bytes
@@ -139,6 +158,42 @@ static func apply_to_machine(machine: NeoGeoMachine, mods: Array[Mod], course_mo
 			ModCourses.apply(machine, mod, extra, new_tiles)
 			machine.extra_rom = extra.bytes
 	return new_tiles
+
+
+## A car a mod adds: what the mod would change is kept, to be changed only
+## while the car is chosen (`choose_car`).
+static func _add_car(machine: NeoGeoMachine, mod: Mod, extra: Extra) -> void:
+	var variant := CarVariant.new()
+	variant.car = ModCars.car_of(mod)
+	variant.name = str(mod.config.get_value("car", "name", mod.name))
+	variant.mod_id = mod.id
+	_recorded = []
+	_patch_rom(machine, mod)
+	ModCars.apply(machine, mod, extra)
+	for write: Array in _recorded:
+		variant.writes.append([write[0], write[1], machine.rom[write[0]]])
+	_recorded = null
+	machine.extra_rom = extra.bytes
+	if not machine.car_variants.has(variant.car):
+		machine.car_variants[variant.car] = []
+	machine.car_variants[variant.car].append(variant)
+
+
+## Makes the car `car` the one of its variants numbered `index`: 0 is the
+## game's own, 1 and on those of mods in turn.
+static func choose_car(machine: NeoGeoMachine, car: int, index: int) -> void:
+	var variants: Array = machine.car_variants.get(car, [])
+	var now: int = machine.chosen_variants.get(car, 0)
+	if index == now or index < 0 or index > variants.size():
+		return
+	if now > 0:
+		var writes: Array = (variants[now - 1] as CarVariant).writes
+		for at in range(writes.size() - 1, -1, -1):
+			machine.rom[writes[at][0]] = writes[at][2]
+	if index > 0:
+		for write: Array in (variants[index - 1] as CarVariant).writes:
+			machine.rom[write[0]] = write[1]
+	machine.chosen_variants[car] = index
 
 
 ## A mod's `[rom]` section: each key a bus address in hexadecimal, each
@@ -176,7 +231,10 @@ static func write_rom(machine: NeoGeoMachine, address: int, bytes: PackedByteArr
 		var at := rom_index(address + offset)
 		if at < 0 or at >= machine.rom.size():
 			return false
-		machine.rom[at ^ 1] = bytes[offset]
+		if _recorded != null:
+			_recorded.append([at ^ 1, bytes[offset]])
+		else:
+			machine.rom[at ^ 1] = bytes[offset]
 	return true
 
 
