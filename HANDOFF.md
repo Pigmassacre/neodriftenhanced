@@ -616,7 +616,10 @@ used by the hand-written game, never in an automated run unless named
   `_choices()`, each added car after the one it is based on (with none,
   the original's three in its order), slides from `_from_car`, sets
   `NeoGeoMachine.choosing_car`, and `game.gd` labels an added car with its
-  name. An added
+  name. With `[car] panel` (`CarVariant.panel`, 256×32 or up to 4×),
+  `_show_panel` hides the bar's sprite (`NAME_SPRITE`, one 16×2-tile
+  picture: logo, name, stat bars) and puts the picture in
+  `NeoGeoMachine.car_panel` for `game.gd` to draw at its place. An added
   car looks like its base: tiles are replaced for every car alike.
 - **`--dump-graphics`** (`mods/graphics_dump.gd`) saves what is shown, from
   the object records, the ground's blocks and the text layer's cells.

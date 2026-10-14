@@ -61,3 +61,5 @@
 - [x] Menus: the gamepad cannot choose a row
 - [x] Resizing the window while paused runs the game a frame per resize step
 - [x] Added cars come in the car choice's left and right, not up and down
+- [x] Menu help texts in an arcade voice
+- [x] Added cars: a bar of their own on the car choice (logo, name, stats), from the mod

@@ -8,6 +8,7 @@ extends RefCounted
 ##     adds = false          ; true: a car of its own, after that one
 ##                           ; on the car choice
 ##     name = "Lancer Evo"   ; its name there
+##     panel = "panel.png"   ; an added car's bar under it there (Mods.PANEL_SIZE)
 ##     top_speed = 1.1       ; on every surface and as the car wears down
 ##     acceleration = 1.2
 ##     braking = 1.0

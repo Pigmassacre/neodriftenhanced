@@ -104,6 +104,8 @@ var _leaving: Array[int] = []
 ## The car slid away from, or -1 for the original's: the one beside the
 ## car chosen (with the cars mods add, it may be the same car).
 var _from_car := -1
+## True while the name of the car is hidden for an added car's own bar.
+var _panel_hid_name := false
 
 
 func routines() -> Dictionary:
@@ -174,6 +176,7 @@ func set_up() -> void:
 	m.call_routine(CLEAR_SPRITES)
 	_leaving.clear()
 	_from_car = -1
+	_panel_hid_name = false
 	(sibling(Palettes) as Palettes).choose_shades(0)
 	_fade(0)
 	set32(BACKDROP_X, -(PIECE_WIDTH << 16))
@@ -200,6 +203,10 @@ func set_up() -> void:
 
 ## $15C9C: a frame of the screen. Leaves 0 in D0 when it is over.
 func update() -> void:
+	if _panel_hid_name:
+		# shown again for the frame's routines, as the game has it
+		Sprite.show(m, u32(NAME_SPRITE), true)
+		_panel_hid_name = false
 	match u8(STATE):
 		FADING_IN: fading_in()
 		CAR_ARRIVING: car_arriving()
@@ -209,9 +216,30 @@ func update() -> void:
 		CHOSEN: chosen()
 		FADING_OUT: fading_out()
 		DONE: done()
+	_show_panel()
 	if m.view_margin > 0:
 		_widen()
 	m.call_routine(BUILD_SPRITES)
+
+
+## The name of the car chosen is shown while it stands still, and for an
+## added car with a bar of its own, that bar is drawn in place of the
+## game's (NeoGeoMachine.car_panel), whose sprite is hidden meanwhile.
+func _show_panel() -> void:
+	var name_sprite := u32(NAME_SPRITE)
+	var state := u8(STATE)
+	m.choosing_car = state in [CHOOSING, CHOSEN, FADING_OUT] and u16(name_sprite + Sprite.SHOWN) == 1
+	m.car_panel = null
+	var chosen: int = m.chosen_variants.get(u16(CAR), 0)
+	if not m.choosing_car or chosen == 0:
+		return
+	var panel := (m.car_variants[u16(CAR)][chosen - 1] as Mods.CarVariant).panel
+	if panel == null:
+		return
+	m.car_panel = panel
+	m.car_panel_at = Vector2i(s16(name_sprite + Sprite.X), s16(name_sprite + Sprite.Y))
+	Sprite.show(m, name_sprite, false)
+	_panel_hid_name = true
 
 
 ## $15CD6
@@ -236,7 +264,6 @@ func car_arriving() -> void:
 
 ## $15D0A
 func choosing() -> void:
-	m.choosing_car = true
 	set16(FRAMES_LEFT, u16(FRAMES_LEFT) - 1)
 	scroll_backdrop()
 	count_down()

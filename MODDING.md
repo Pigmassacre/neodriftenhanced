@@ -138,8 +138,22 @@ acceleration=1.4
 ```
 
 On the car choice, an added car comes after the one it is made from as
-left and right go through the cars; its name shows over it. Any number
-may be added to each of the three. An added car's `[rom]` section, if it
+left and right go through the cars, with its name over the name of that
+car. Any number may be added to each of the three.
+
+Better still, give it a bar of its own, the one under the car with the
+logo, the name and the bars of speed, control and body:
+
+```ini
+[car]
+panel="panel.png"   ; in the mod's folder
+```
+
+It is one picture of 256 by 32 pixels, or 2, 3 or 4 times that. To start
+from the game's, save the pictures with `--dump-graphics` (see Pictures)
+and go through the cars: the bars are `pictures/09E4A4.png` (Celica),
+`09E528.png` (Impreza) and `09E5AC.png` (Lancer). It fades with the screen
+but does not take on the game's colours. An added car's `[rom]` section, if it
 has one, is changed only while that car is chosen. It looks like the car
 it is made from: pictures replace tiles everywhere, so they cannot tell
 the two apart.

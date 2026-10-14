@@ -56,6 +56,13 @@ class CarVariant:
 	var mod_id := ""
 	## The bytes of NeoGeoMachine.rom it changes, each [index, new, old].
 	var writes: Array = []
+	## The car choice's bar under the car for it (`[car] panel`): its logo,
+	## name and the bars of its speed, control and body, or null.
+	var panel: Image
+
+
+## The size of the car choice's bar under the car, in the game's pixels.
+const PANEL_SIZE := Vector2i(256, 32)
 
 
 ## While not null, `write_rom` keeps what it would write here: [index, byte].
@@ -167,6 +174,9 @@ static func _add_car(machine: NeoGeoMachine, mod: Mod, extra: Extra) -> void:
 	variant.car = ModCars.car_of(mod)
 	variant.name = str(mod.config.get_value("car", "name", mod.name))
 	variant.mod_id = mod.id
+	var panel := str(mod.config.get_value("car", "panel", ""))
+	if panel != "":
+		variant.panel = _panel(mod, panel)
 	_recorded = []
 	_patch_rom(machine, mod)
 	ModCars.apply(machine, mod, extra)
@@ -177,6 +187,21 @@ static func _add_car(machine: NeoGeoMachine, mod: Mod, extra: Extra) -> void:
 	if not machine.car_variants.has(variant.car):
 		machine.car_variants[variant.car] = []
 	machine.car_variants[variant.car].append(variant)
+
+
+## The picture `file` of `mod` as the car choice's bar, PANEL_SIZE or 2, 3
+## or 4 times as large; null, with a warning, when it is not.
+static func _panel(mod: Mod, file: String) -> Image:
+	var path := mod.path.path_join(file)
+	var image := Image.load_from_file(path) if FileAccess.file_exists(path) else null
+	if image == null:
+		push_warning("Mod %s: %s could not be read" % [mod.id, file])
+		return null
+	for scale in range(1, 5):
+		if image.get_size() == PANEL_SIZE * scale:
+			return image
+	push_warning("Mod %s: %s is %d × %d, not 256 × 32 or 2, 3 or 4 times that" % [mod.id, file, image.get_width(), image.get_height()])
+	return null
 
 
 ## Makes the car `car` the one of its variants numbered `index`: 0 is the

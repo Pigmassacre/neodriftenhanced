@@ -77,34 +77,34 @@ const PAGE_NAMES := {
 }
 ## What a row is for, by its name.
 const ABOUT := {
-	"Arcade": "The whole game: every stage in turn, against the clock.",
-	"Freeplay": "Any one stage, on its own.",
-	"Options": "Picture, sound, controls and the game.",
-	"Mods": "Turn on and off what has been added to the game.",
-	"Course editor": "Make courses of your own, and change those made before.",
-	"Quit to desktop": "Close the game.",
-	"Resume": "Back to the race.",
-	"Quit to main menu": "Leave this game for the main menu.",
-	"Practice stage": "The practice course, to get to know the car.",
-	"Picture": "Window, scaling, wide picture and the CRT.",
-	"Sound": "How loud the music and the effects are.",
-	"Controls": "Keys and gamepad buttons.",
+	"Arcade": "Every stage, back to back. Beat the clock!",
+	"Freeplay": "Pick a stage and go!",
+	"Options": "Tune your setup.",
+	"Mods": "Switch your add-ons on and off.",
+	"Course editor": "Build your own courses!",
+	"Quit to desktop": "Game over. See you next time!",
+	"Resume": "Back on the gas!",
+	"Quit to main menu": "Retire from this race.",
+	"Practice stage": "Warm up those tyres!",
+	"Picture": "Window, scaling, wide screen and CRT.",
+	"Sound": "Turn it up!",
+	"Controls": "Remap keys and pad buttons.",
 	"Game": "HUD, map and continues.",
-	"Full screen": "The whole screen, or a window.",
-	"Window size": "The size of the window when not full screen.",
-	"V-Sync": "Waits for the display between frames, so the picture does not tear.",
-	"Wide picture": "Shows more of the course at the sides on a wide screen.",
-	"Whole-number scaling": "Scales by whole numbers only, so every pixel is the same size.",
-	"CRT": "Curved glass, scanlines and a shadow mask, as on an arcade monitor.",
-	"CRT curvature": "How much the CRT's glass curves.",
-	"Transparent shadows": "Shadows drawn see-through, instead of flickering as on the original.",
-	"Volume": "Everything together.",
-	"Music": "The music alone.",
-	"Effects": "Engines, tyres and the rest.",
-	"HUD": "New is drawn at the window's resolution, Original is the game's own.",
-	"Map of the course": "A map of the course during a race.",
-	"Free continues": "Continue without putting in another coin.",
-	"Back": "Back to the page before.",
+	"Full screen": "Go full screen!",
+	"Window size": "How big the window is.",
+	"V-Sync": "No screen tearing.",
+	"Wide picture": "See more of the course on wide screens.",
+	"Whole-number scaling": "Pixel-perfect: every pixel the same size.",
+	"CRT": "Curved glass and scanlines, straight out of the arcade!",
+	"CRT curvature": "How much the glass bulges.",
+	"Transparent shadows": "See-through shadows instead of the arcade's flicker.",
+	"Volume": "Master volume.",
+	"Music": "Music volume.",
+	"Effects": "Engines, skids and crashes!",
+	"HUD": "New: sharp and modern. Original: the arcade's own.",
+	"Map of the course": "Show the course map while you race.",
+	"Free continues": "Keep going, no coin needed!",
+	"Back": "Go back.",
 }
 
 var settings: Settings
@@ -226,7 +226,7 @@ func cover(text: String) -> void:
 	_title.text = text if text != "" else "Arcade"
 	_tag.visible = false
 	_place_header(false)
-	_page_about = "Getting the board ready"
+	_page_about = "Get ready!"
 	_about.text = _page_about
 	_keys.text = ""
 	_row_width = 40.0 * _unit
@@ -332,16 +332,16 @@ func _show(arriving := true) -> void:
 			_item("Quit to desktop", func() -> void: quit_chosen.emit())
 		"editor":
 			_title.text = "Course editor"
-			_page_about = "Courses are kept as mods, in %s." % ProjectSettings.globalize_path("user://mods")
+			_page_about = "Your courses are saved in %s" % ProjectSettings.globalize_path("user://mods")
 			for mod in Mods.find_all():
 				if ModCourses.is_course(mod):
 					var button := _item("Change: " + ModCourses.name_of(mod),
 							func() -> void: editor_chosen.emit(mod.path, ModCourses.base_of(mod)))
-					button.set_meta("about", "The course of the mod %s, in %s." % [mod.name, mod.path])
+					button.set_meta("about", "Back to work on %s!" % mod.name)
 			for stage in STAGES:
 				var button := _item("New, from the practice stage" if stage == 0 else "New, from stage %d" % stage,
 						func() -> void: editor_chosen.emit("", stage))
-				button.set_meta("about", "A new course, a copy of %s to start from." %
+				button.set_meta("about", "Start a new course from %s!" %
 						("the practice stage" if stage == 0 else "stage %d" % stage))
 			_item("Back", _back)
 		"pause":
@@ -357,12 +357,12 @@ func _show(arriving := true) -> void:
 				var button := _item("Practice stage" if stage == 0 else "Stage %d" % stage,
 						func() -> void: stage_chosen.emit(stage))
 				if stage > 0:
-					button.set_meta("about", "Stage %d on its own." % stage)
+					button.set_meta("about", "Stage %d. Go!" % stage)
 			for mod in Mods.enabled(settings.mods_off):
 				if ModCourses.is_course(mod):
 					var base := ModCourses.base_of(mod)
 					var button := _item(ModCourses.name_of(mod), func() -> void: course_chosen.emit(mod.id, base))
-					button.set_meta("about", mod.description if mod.description != "" else "A course of the mod %s." % mod.name)
+					button.set_meta("about", mod.description if mod.description != "" else "Custom course: %s" % mod.name)
 			_item("Back", _back)
 		"options":
 			_title.text = "Options"
@@ -409,7 +409,7 @@ func _show(arriving := true) -> void:
 		"controls":
 			_title.text = "Controls"
 			keys = "Enter  Change      Delete  Empty      Esc  Back"
-			_page_about = "Choose a place, then press what it should be. Esc leaves it as it is."
+			_page_about = "Pick a slot, then press the new key or button! Esc to cancel."
 	var names: Array[String] = []
 	for open_page: Array in _pages:
 		names.append(PAGE_NAMES.get(open_page[0], open_page[0]))
@@ -740,9 +740,9 @@ func _mods() -> void:
 	var mods := Mods.find_all()
 	var folders := Mods.folders()
 	if mods.is_empty():
-		_page_about = "No mods. Put them in %s or %s." % [folders[0], folders[1]]
+		_page_about = "No mods yet! Drop them in %s or %s" % [folders[0], folders[1]]
 		return
-	_page_about = "Mods are put in %s or %s." % [folders[0], folders[1]]
+	_page_about = "Drop mods in %s or %s" % [folders[0], folders[1]]
 	for mod in mods:
 		var value := _value()
 		var on := func() -> bool: return not mod.id in settings.mods_off

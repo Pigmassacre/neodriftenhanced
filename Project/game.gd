@@ -171,6 +171,10 @@ var _editing := ""
 var _log_sounds := false
 ## Says which car is chosen on the car choice when mods add cars.
 var _car_label: Label
+## Or, for an added car with a bar of its own on the car choice, that bar
+## (NeoGeoMachine.car_panel), and its textures by picture.
+var _car_panel: TextureRect
+var _panel_textures := {}
 ## Where the car choice shows the name of the car, in the game's pixels.
 const NAME_BOX := Rect2(70, 180, 116, 26)
 ## What plays the sounds of mods (mods/mod_sounds.gd).
@@ -785,6 +789,12 @@ func _set_up_screen() -> void:
 	_car_label.add_theme_stylebox_override("normal", backing)
 	_car_label.visible = false
 	_picture.add_child(_car_label)
+	_car_panel = TextureRect.new()
+	_car_panel.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_car_panel.stretch_mode = TextureRect.STRETCH_SCALE
+	_car_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_car_panel.visible = false
+	_picture.add_child(_car_panel)
 
 
 ## Makes the picture as high as the window, or as wide when the window is
@@ -1024,16 +1034,33 @@ func _refresh(again := false) -> void:
 	_show_car_variant()
 
 
-## On the car choice, the name of the car chosen when it is one a mod
-## adds, which the game's own name of the car it is based on would not tell.
+## On the car choice, for a car a mod adds, its bar under the car, or its
+## name over the game's name of the car it is based on.
 func _show_car_variant() -> void:
 	if _car_label == null:
 		return
 	var car: int = machine.ram.decode_u16(CarChoice.CAR & 0xFFFF)
 	var chosen: int = machine.chosen_variants.get(car, 0)
-	_car_label.visible = machine.choosing_car and chosen > 0 and _state != IN_MENU
+	var shown: bool = machine.choosing_car and chosen > 0 and _state != IN_MENU
+	# the screen fades out with the car chosen, and these with it
+	var brightness := clampf(machine.ram.decode_u16(CarChoice.BRIGHTNESS & 0xFFFF) / 256.0, 0.0, 1.0)
+	_car_panel.visible = shown and machine.car_panel != null
+	_car_label.visible = shown and machine.car_panel == null
+	if _car_panel.visible:
+		var panel: Image = machine.car_panel
+		if not _panel_textures.has(panel):
+			_panel_textures[panel] = ImageTexture.create_from_image(panel)
+		_car_panel.texture = _panel_textures[panel]
+		# the hardware's lines start 16 above the picture
+		var at := Vector2(machine.car_panel_at) + Vector2(video.margin(), -16)
+		_car_panel.position = at * _pixel
+		_car_panel.size = Vector2(Mods.PANEL_SIZE) * _pixel
+		_car_panel.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST if panel.get_size() == Mods.PANEL_SIZE \
+				else CanvasItem.TEXTURE_FILTER_LINEAR
+		_car_panel.modulate = Color(brightness, brightness, brightness)
 	if not _car_label.visible:
 		return
+	_car_label.modulate = Color(brightness, brightness, brightness)
 	_car_label.text = (machine.car_variants[car][chosen - 1] as Mods.CarVariant).name
 	# over the name of the car on the panel under it, in the game's pixels
 	var name_box := Rect2(NAME_BOX.position + Vector2(video.margin(), 0), NAME_BOX.size)
@@ -1088,6 +1115,7 @@ func _step() -> void:
 		machine.top_up(_topup[0], _topup[1], _topup[2])
 	var started := Time.get_ticks_usec()
 	machine.choosing_car = false
+	machine.car_panel = null
 	machine.run_frame()
 	_filled_width = video.view_width
 	if not machine.sounds_taken.is_empty():

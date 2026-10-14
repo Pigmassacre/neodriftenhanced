@@ -170,11 +170,16 @@ var log_sounds := false
 const STOP_MUSIC := -1
 const RESET_SOUND := -2
 ## Cars that mods add (Mods.CarVariant): by car, those that may be chosen
-## in its place; by car, which is chosen (0 the game's own); and whether
-## the car choice is waiting for a choice this frame.
+## in its place; by car, which is chosen (0 the game's own); whether the
+## car choice shows the name of the car chosen this frame; and, when it is
+## an added car with a bar of its own (CarVariant.panel), that bar, which
+## is to be drawn at `car_panel_at` (game pixels, its top left) in place
+## of the game's.
 var car_variants := {}
 var chosen_variants := {}
 var choosing_car := false
+var car_panel: Image
+var car_panel_at := Vector2i.ZERO
 
 ## Return address of a routine called by hand-written code: never a block.
 const CALL_RETURN := 0xFFFFFE
