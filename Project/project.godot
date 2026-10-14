@@ -12,6 +12,7 @@ config_version=5
 
 config/name="Neo Drift Out"
 run/main_scene="res://game.tscn"
+run/main_scene.template="res://boot.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [display]

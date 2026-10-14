@@ -853,3 +853,16 @@ python3 verify_session.py practice_steer --translated --compare-views   # the sc
 - Work is on `main`; `practice-stage-background` is an older state of it.
 - `Godot` in the repo root is a symlink to the editor binary's folder
   (`AGENTS.md` expects it there); it is git-ignored.
+- Releases: `Tools/build.py` exports Linux and Windows builds
+  (`Project/export_presets.cfg`) and zips them in `Builds/` with a READ ME
+  for players, `MODDING.md` and the example mods; `Tools/release.py
+  VERSION` builds, tags `vVERSION` and publishes the zips as a GitHub
+  release (`--draft`, `--dry-run`). The build refuses to run while
+  `Project/` has files git does not track, so nothing made from the ROMs
+  is exported. An exported game starts with `Project/boot.gd`
+  (`run/main_scene.template` in `project.godot`): it copies the player's
+  ROMs from `neodrift.zip`/`neogeo.zip` (or folders) beside the game into
+  `user://game`, which `MachineLoader.repo_dir()` is in an exported game,
+  and makes there what `Tools/build_data.py` makes in `data/game` (the
+  same bytes, in a quarter of a second). Run from the repository nothing
+  of that is used.

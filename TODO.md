@@ -63,3 +63,4 @@
 - [x] Added cars come in the car choice's left and right, not up and down
 - [x] Menu help texts in an arcade voice
 - [x] Added cars: a bar of their own on the car choice (logo, name, stats), from the mod
+- [x] A build script that packages the game, and a release script that publishes it on GitHub

@@ -12,7 +12,11 @@ const SNAPSHOT_MAGIC := "NDS1"
 const E_CLOCK_PHASE := 8
 
 
+## Where neodrift/, neogeo/ and data/ are: the top of the repository, or in
+## an exported game a folder in the user's folder that boot.gd fills.
 static func repo_dir() -> String:
+	if OS.has_feature("template"):
+		return ProjectSettings.globalize_path("user://game")
 	return ProjectSettings.globalize_path("res://").path_join("..").simplify_path()
 
 

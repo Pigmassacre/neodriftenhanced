@@ -43,6 +43,18 @@ options, `--arcade` and `--stage=3` go straight to a game, `--width=320`
 keeps the original width, and `--hardware-video` draws exactly what the
 hardware would. The rest are listed at the top of `Project/game.gd`.
 
+## Builds and releases
+
+```sh
+python3 Tools/build.py              # Builds/NeoDriftOutEnhanced-VERSION-{linux,windows}.zip
+python3 Tools/release.py 1.0        # builds, tags v1.0 and publishes a GitHub release
+```
+
+The zips hold no part of the game: an exported game asks for the player's
+own `neodrift.zip` and `neogeo.zip` (MAME's sets) beside it, and makes what
+it needs from them on the first start. `release.py --dry-run` builds
+without publishing, `--draft` leaves the release a draft.
+
 ## Mods
 
 Mods replace pictures (in full colour, up to four times as fine), sounds and
