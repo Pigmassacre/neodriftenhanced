@@ -482,8 +482,20 @@ are in game pixels as before; `--window-shot` takes the window.
 ### The menus
 
 `menu/menu.gd` is the main menu, the options and the pause menu, drawn over
-the picture at the window's resolution; `settings.gd` holds the options and
-keeps them in `user://settings.cfg`. `game.gd` does what a choice means:
+the picture at the window's resolution (over the window, or over the
+picture alone while the CRT is on, so that all of it is under the glass);
+`settings.gd` holds the options and keeps them in `user://settings.cfg`.
+Its look is made of three shaders and Godot's own font, made heavy,
+slanted and spaced out, so nothing is needed from outside:
+`menu_backdrop.gdshader` dims the game, draws the slanted panel (its edge
+moves to fit each page's rows), the lines along its edge, the streaks and
+the bar at the bottom; `menu_title.gdshader` shades the page's name and
+runs a shine over it; `menu_row.gdshader` is each row's bar, lit by
+tweening its `chosen`. Rows are placed by hand rather than in a container,
+so that they can slide in one after the other and slide out when chosen.
+The bar at the bottom shows `ABOUT` for the chosen row and the page's keys.
+`cover` is the loading screen while a game is got ready. `game.gd` does
+what a choice means:
 
 - **The main menu is over a frame of the original's attract mode**, held
   still: the machine is run there without sound (`MENU_FRAME`, a moment of

@@ -630,8 +630,9 @@ func _fit_view() -> void:
 	_hud.pixel = _pixel
 	_hud.size = _picture.size
 	if _menu != null:
-		_menu.position = Vector2.ZERO
-		_menu.size = window
+		# under the CRT's glass, which is over the picture alone
+		_menu.position = _picture.position if _crt else Vector2.ZERO
+		_menu.size = _picture.size if _crt else window
 	if video.scene != null:
 		machine.view_margin = video.margin()
 	_show_crt()
