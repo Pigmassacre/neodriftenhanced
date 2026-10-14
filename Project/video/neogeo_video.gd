@@ -195,6 +195,24 @@ func _ready() -> void:
 	_lay_out()
 
 
+## Draws the tiles mods replace from `graphics` (mods/mod_graphics.gd), or
+## none with null.
+func set_replacements(graphics: RefCounted) -> void:
+	var replacing: bool = graphics != null and graphics.count > 0
+	for material in [_sprite_material, _ground_material, _fix_material]:
+		material.set_shader_parameter("replacing", replacing)
+		if replacing:
+			material.set_shader_parameter("replaced_index_tex", ImageTexture.create_from_image(graphics.index))
+			material.set_shader_parameter("replaced_tex", ImageTexture.create_from_image(graphics.atlas))
+			material.set_shader_parameter("replaced_colours_tex", ImageTexture.create_from_image(graphics.colours))
+			material.set_shader_parameter("replaced_scale", graphics.scale)
+
+
+## The colours the picture is drawn with: 16 RGBA8 colours to each of 256 palettes.
+func palette_bytes() -> PackedByteArray:
+	return _palette_bytes
+
+
 ## How far the hardware's picture is from the left edge.
 func margin() -> int:
 	return (view_width - int(SCREEN.x)) / 2

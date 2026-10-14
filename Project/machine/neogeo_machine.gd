@@ -84,6 +84,9 @@ var missing_block := -1
 # memory
 var rom := PackedByteArray()
 var bios := PackedByteArray()
+## What mods add to the program ROM (mods/mod_courses.gd), from $800000 on,
+## where a Neo Geo has its memory card. Only the hand-written game reads it.
+var extra_rom := PackedByteArray()
 var ram := PackedByteArray()
 var sram := PackedByteArray()
 var vram := PackedInt32Array()
@@ -547,6 +550,8 @@ func _io_read(address: int) -> int:
 		return ((0xFF ^ (input_start & 0x0F)) << 8) | 0xFF
 	if region >= 0xD0 and region < 0xE0:
 		return sram.decode_u16(address & 0xFFFF)
+	if region >= 0x80 and region < 0xC0 and address - 0x800000 < extra_rom.size():
+		return extra_rom.decode_u16(address - 0x800000)
 	return 0xFFFF
 
 

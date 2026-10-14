@@ -79,12 +79,15 @@ var music := 1.0
 var effects := 1.0
 ## For each control its PLACES places.
 var controls := {}
+## The mods turned off, by folder name (mods/mods.gd); all others are on.
+var mods_off: Array = []
 
 ## The properties kept in the file, by section.
 const KEPT := {
 	"picture": ["full_screen", "window_size", "vsync", "wide", "whole_pixels", "crt", "crt_curve", "translucency"],
 	"game": ["hud", "map", "free_continues"],
 	"sound": ["volume", "music", "effects"],
+	"mods": ["mods_off"],
 }
 
 

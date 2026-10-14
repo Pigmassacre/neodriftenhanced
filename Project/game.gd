@@ -62,11 +62,17 @@ extends Node2D
 ##   --compare-views[=FOLDER]   draw every frame both ways, 320 pixels wide and with the
 ##                              hardware's timing and limits, and count the frames that
 ##                              differ; the first of them are saved to FOLDER
+##   --mods=ID[,ID...]          use these mods (mods/mods.gd), and no others, even when
+##                              automated; --no-mods none (automated runs use none)
+##   --mod-folder=PATH          look for mods in that folder too
+##   --dump-graphics=FOLDER     save every picture the game shows, for making mods
 
 ## The hardware refreshes slightly slower than 60 Hz.
 const FRAME_TIME := 1.0 / 59.185606
 ## Where the best times are kept from one run to the next.
 const BEST_TIMES := "user://best_times.bin"
+## Where they are kept while mods that change the play are on.
+const BEST_TIMES_MODDED := "user://best_times_modded.bin"
 ## The widest picture drawn: what the game keeps of the course around the
 ## camera is not made for more (about 2.85 to 1).
 const WIDEST_VIEW := 640
@@ -138,6 +144,20 @@ var _crt := false
 var _window_shots := false
 var _map: Minimap
 var _hud: RaceHud
+## How many times finer than game pixels the picture is drawn: for the
+## pictures mods replace with finer ones.
+var _fine := 1
+var _replaced_scale := 1
+
+## The mods in use (mods/mods.gd), whether any are used at all, those named
+## on the command line, and what the replaced pictures were last made from.
+var _mods: Array[Mods.Mod] = []
+var _use_mods := true
+var _named_mods: Array = []
+var _graphics_key := ""
+## True when the mods have been turned on or off since the machine started.
+var _mods_changed := false
+var _dump: RefCounted
 
 var _settings := Settings.new()
 ## Null when the run is automated.
@@ -248,6 +268,14 @@ func _ready() -> void:
 			start_arcade = true
 		elif arg.begins_with("--stage="):
 			_stage = int(arg.trim_prefix("--stage="))
+		elif arg.begins_with("--mods="):
+			_named_mods = Array(arg.trim_prefix("--mods=").split(",", false))
+		elif arg.begins_with("--mod-folder="):
+			Mods.more_folders.append(arg.trim_prefix("--mod-folder="))
+		elif arg == "--no-mods":
+			_use_mods = false
+		elif arg.begins_with("--dump-graphics="):
+			_dump = preload("res://mods/graphics_dump.gd").new(arg.trim_prefix("--dump-graphics="))
 	var with_menu := not _comparing and (not automated or menu_page != "" or start_arcade or _stage >= 0)
 	if not automated:
 		_settings.load_file()
@@ -277,6 +305,8 @@ func _ready() -> void:
 	if _program:
 		_from_snapshot = true
 	_keeps_times = not automated and not _from_snapshot
+	# what is compared with the original is the original
+	_use_mods = _use_mods and not _program and (not automated or not _named_mods.is_empty())
 	if not _start_machine():
 		push_error("Could not start: need the ROM files%s%s" % [" and " + _snapshot if _from_snapshot else "",
 				", and the generated program" if _program else ""])
@@ -319,10 +349,11 @@ func _start_machine() -> bool:
 	machine = MachineLoader.create(_hand_written, _program)
 	if machine == null:
 		return false
+	_apply_mods()
 	if not _from_snapshot:
 		var kept := PackedByteArray()
-		if _keeps_times and FileAccess.file_exists(BEST_TIMES):
-			kept = FileAccess.get_file_as_bytes(BEST_TIMES)
+		if _keeps_times and FileAccess.file_exists(_best_times()):
+			kept = FileAccess.get_file_as_bytes(_best_times())
 		Decomp.power_on(machine, kept)
 		_times_kept = Decomp.kept_times(machine)
 	elif MachineLoader.load_snapshot(machine, _snapshot) != OK:
@@ -351,6 +382,9 @@ func _set_up_menu() -> void:
 	_menu.settings = _settings
 	add_child(_menu)
 	_menu.changed.connect(_apply_settings)
+	_menu.page_left.connect(func(page: String) -> void:
+		if page == "mods" and _mods_changed:
+			_to_main_menu("main"))
 	_menu.arcade_chosen.connect(_start_game.bind(-1))
 	_menu.stage_chosen.connect(_start_game)
 	_menu.resumed.connect(_resume)
@@ -376,6 +410,8 @@ func _apply_settings(section: String) -> void:
 			AudioServer.set_bus_mute(0, _settings.volume <= 0.0)
 			if sound != null:
 				sound.set_volumes(_settings.music, _settings.effects)
+		"mods":
+			_mods_changed = true
 		"game":
 			_map.wanted = _settings.map
 			_hud.wanted = _settings.hud == Settings.HUD_NEW and video.scene != null
@@ -476,6 +512,39 @@ func _resume() -> void:
 	_menu.close()
 
 
+## Where the best times are kept: apart while mods change how the game plays.
+func _best_times() -> String:
+	for mod in _mods:
+		if mod.changes_play():
+			return BEST_TIMES_MODDED
+	return BEST_TIMES
+
+
+## The mods, as the options or the command line have them, applied to the
+## new machine, and the pictures they replace made ready when they have
+## changed.
+func _apply_mods() -> void:
+	_mods_changed = false
+	_mods = []
+	if _use_mods:
+		for mod in Mods.find_all():
+			if (mod.id in _named_mods) if not _named_mods.is_empty() else not mod.id in _settings.mods_off:
+				_mods.append(mod)
+	Mods.apply_to_machine(machine, _mods)
+	var key := ",".join(_mods.map(func(mod: Mods.Mod) -> String: return mod.id))
+	if key == _graphics_key:
+		return
+	_graphics_key = key
+	var graphics: RefCounted = null
+	if not _mods.is_empty():
+		graphics = preload("res://mods/mod_graphics.gd").new()
+		graphics.build(_mods, machine.rom,
+				FileAccess.get_file_as_bytes(MachineLoader.repo_dir().path_join("data/game/tiles.bin")))
+	video.set_replacements(graphics)
+	_replaced_scale = graphics.scale if graphics != null and graphics.count > 0 else 1
+	_fit_view()
+
+
 ## Writes the best times to where the next machine finds them, as the
 ## board keeps them while it is off.
 func _keep_best_times() -> void:
@@ -484,7 +553,7 @@ func _keep_best_times() -> void:
 	var times := Decomp.kept_times(machine)
 	if times == _times_kept:
 		return
-	var file := FileAccess.open(BEST_TIMES, FileAccess.WRITE)
+	var file := FileAccess.open(_best_times(), FileAccess.WRITE)
 	if file != null:
 		file.store_buffer(times)
 		_times_kept = times
@@ -621,8 +690,12 @@ func _fit_view() -> void:
 		width = int(NeoGeoVideo.SCREEN.x)
 	var width_before := video.view_width
 	video.view_width = mini(width, WIDEST_VIEW) & ~1
-	_screen.size = Vector2i(video.view_width, int(NeoGeoVideo.SCREEN.y))
-	_picture.size = (Vector2(_screen.size) * _pixel).round()
+	var game_size := Vector2i(video.view_width, int(NeoGeoVideo.SCREEN.y))
+	_fine = clampi(mini(_replaced_scale, floori(_pixel)), 1, _replaced_scale)
+	_screen.size = game_size * _fine
+	_screen.size_2d_override = game_size if _fine > 1 else Vector2i.ZERO
+	_screen.size_2d_override_stretch = _fine > 1
+	_picture.size = (Vector2(game_size) * _pixel).round()
 	_picture.position = ((window - _picture.size) / 2).round()
 	_map.pixel = _pixel
 	_map.view_margin = video.margin()
@@ -648,7 +721,7 @@ func _fit_view() -> void:
 
 func _show_crt() -> void:
 	_enlarge_material.set_shader_parameter("picture_size", Vector2(_screen.size))
-	_enlarge_material.set_shader_parameter("scale", _pixel)
+	_enlarge_material.set_shader_parameter("scale", _pixel / _fine)
 	_crt_glass.visible = _crt
 	_crt_glass.position = _picture.position
 	_crt_glass.size = _picture.size
@@ -832,6 +905,8 @@ func _press(key: Key, pressed: bool) -> void:
 ## same frame drawn another way.
 func _refresh(again := false) -> void:
 	video.refresh(again)
+	if _dump != null and not again:
+		_dump.note(machine, video.scene, video.palette_bytes())
 	var in_race := video.hud_shown and _state != IN_MENU
 	_map.refresh(in_race)
 	_hud.refresh(in_race)

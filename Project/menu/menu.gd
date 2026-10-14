@@ -23,6 +23,8 @@ signal main_menu_chosen
 signal quit_chosen
 ## A setting of this section of Settings.KEPT (or "controls") was changed.
 signal changed(section: String)
+## A page has been left for the one before it.
+signal page_left(page: String)
 
 const BACKDROP_SHADER := preload("res://menu/menu_backdrop.gdshader")
 const TITLE_SHADER := preload("res://menu/menu_title.gdshader")
@@ -64,12 +66,14 @@ const CHOSEN_SHIFT := 1.6
 const PAGE_NAMES := {
 	"main": "Main menu", "pause": "Paused", "freeplay": "Freeplay", "options": "Options",
 	"picture": "Picture", "sound": "Sound", "controls": "Controls", "game": "Game",
+	"mods": "Mods",
 }
 ## What a row is for, by its name.
 const ABOUT := {
 	"Arcade": "The whole game: every stage in turn, against the clock.",
 	"Freeplay": "Any one stage, on its own.",
 	"Options": "Picture, sound, controls and the game.",
+	"Mods": "Turn on and off what has been added to the game.",
 	"Quit to desktop": "Close the game.",
 	"Resume": "Back to the race.",
 	"Quit to main menu": "Leave this game for the main menu.",
@@ -315,6 +319,7 @@ func _show(arriving := true) -> void:
 			_item("Arcade", func() -> void: arcade_chosen.emit())
 			_item("Freeplay", go.bind("freeplay"))
 			_item("Options", go.bind("options"))
+			_item("Mods", go.bind("mods"))
 			_item("Quit to desktop", func() -> void: quit_chosen.emit())
 		"pause":
 			_title.text = "Paused"
@@ -366,6 +371,12 @@ func _show(arriving := true) -> void:
 			_choice("HUD", "game", "hud", Settings.HUD_NAMES)
 			_switch("Map of the course", "game", "map")
 			_switch("Free continues", "game", "free_continues")
+			_item("Back", _back)
+		"mods":
+			_title.text = "Mods"
+			width = 74.0
+			keys = changing
+			_mods()
 			_item("Back", _back)
 		"controls":
 			_title.text = "Controls"
@@ -479,8 +490,9 @@ func go(page: String) -> void:
 
 func _back() -> void:
 	if _pages.size() > 1:
-		_pages.pop_back()
+		var left: String = _pages.pop_back()[0]
 		_show()
+		page_left.emit(left)
 	elif not _pages.is_empty() and _pages[0][0] == "pause":
 		resumed.emit()
 
@@ -683,6 +695,35 @@ func _choice(text: String, section: String, property: String, names: Array[Strin
 	_row(text, value, func(direction: int) -> void:
 		_change(section, property, posmod(int(settings.get(property)) + direction, names.size()))
 		tell.call())
+
+
+## A row for each mod there is, that turns it on and off. What it changes
+## shows once the menu is left or a game is started.
+func _mods() -> void:
+	var mods := Mods.find_all()
+	var folders := Mods.folders()
+	if mods.is_empty():
+		_page_about = "No mods. Put them in %s or %s." % [folders[0], folders[1]]
+		return
+	_page_about = "Mods are put in %s or %s." % [folders[0], folders[1]]
+	for mod in mods:
+		var value := _value()
+		var on := func() -> bool: return not mod.id in settings.mods_off
+		var tell := func() -> void: _tell(value, "On" if on.call() else "Off", on.call())
+		tell.call()
+		var button := _row(mod.name, value, func(_direction: int) -> void:
+			var off := settings.mods_off.duplicate()
+			if on.call():
+				off.append(mod.id)
+			else:
+				off.erase(mod.id)
+			_change("mods", "mods_off", off)
+			tell.call())
+		var about := mod.description
+		var by := " ".join([mod.version, ("by " + mod.author) if mod.author != "" else ""]).strip_edges()
+		if by != "":
+			about = "%s (%s)" % [about, by] if about != "" else by
+		button.set_meta("about", about)
 
 
 func _window_size() -> void:

@@ -48,19 +48,27 @@ const int HUD_LEFT_END_ABOVE = 15;
 const int HUD_LEFT_END_BELOW = 13;
 const int HUD_RIGHT_START = 26;
 
-// The colour number and the palette of a cell's tile at a pixel of it.
-ivec2 tile_pixel(ivec4 cell, ivec2 pixel) {
+#include "res://video/replaced.gdshaderinc"
+
+// Mods replace the text layer's tiles as tile numbers from this on
+// (mods/mod_graphics.gd).
+const int REPLACED_FIX = 0xFF000;
+
+// The colour number and the palette of a cell's tile at a pixel of it, the
+// tile's number plus one (0 for none) and the pixel within the tile.
+ivec4 tile_pixel(ivec4 cell, ivec2 pixel) {
 	int tile = cell.r | (cell.g << 8);
 	if (wipe >= 0.0 && cell.b == wipe_palette
 			&& (tile == wipe_cells.x || tile == wipe_cells.y || tile == wipe_cells.z)) {
-		return ivec2(0);
+		return ivec4(0);
 	}
-	ivec2 atlas = ivec2(tile & 63, tile >> 6) * 8 + (pixel & ivec2(7));
-	return ivec2(int(round(texelFetch(fix_tex, atlas, 0).r * 255.0)), cell.b);
+	ivec2 within = pixel & ivec2(7);
+	ivec2 atlas = ivec2(tile & 63, tile >> 6) * 8 + within;
+	return ivec4(int(round(texelFetch(fix_tex, atlas, 0).r * 255.0)), cell.b, tile + 1, within.x | (within.y << 3));
 }
 
 // The same for the text at `x` across the layer, on the picture's line `y`.
-ivec2 text_pixel(int x, int y) {
+ivec4 text_pixel(int x, int y) {
 	ivec2 cell_pos = ivec2(x >> 3, (y >> 3) + FIRST_ROW);
 	ivec4 cell = ivec4(round(texelFetch(cells_tex, cell_pos, 0) * 255.0));
 	if (y < cell.a) {
@@ -85,7 +93,7 @@ void fragment() {
 		parted = 0;
 	}
 	int left_end = (pixel.y < 112 ? HUD_LEFT_END_ABOVE : HUD_LEFT_END_BELOW) * 8;
-	ivec2 found = ivec2(0);
+	ivec4 found = ivec4(0);
 	if (parted > 0 && x + parted >= first && x + parted < left_end) {
 		found = text_pixel(x + parted, pixel.y);
 	} else if (parted > 0 && x - parted >= HUD_RIGHT_START * 8 && x - parted < last) {
@@ -100,8 +108,16 @@ void fragment() {
 			found = tile_pixel(cell, ivec2(0));
 		}
 	}
+	int replaced_at = found.z > 0 ? replacement_of(REPLACED_FIX + found.z - 1) : 0;
 	if (curtain) {
 		COLOR = vec4(wipe_colour, 1.0);
+	} else if (replaced_at > 0) {
+		vec4 colour = replaced_colour(replaced_at, ivec2(found.w & 7, found.w >> 3),
+				fract(UV * view_size), found.x, pal_tex, found.y);
+		if (colour.a == 0.0) {
+			discard;
+		}
+		COLOR = colour;
 	} else if (found.x == 0) {
 		discard;
 	} else {
