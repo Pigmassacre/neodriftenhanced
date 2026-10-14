@@ -137,8 +137,8 @@ top_speed=1.15
 acceleration=1.4
 ```
 
-On the car choice, up and down go through the game's car and those added
-in its place; the name of the one chosen shows over the car. Any number
+On the car choice, an added car comes after the one it is made from as
+left and right go through the cars; its name shows over it. Any number
 may be added to each of the three. An added car's `[rom]` section, if it
 has one, is changed only while that car is chosen. It looks like the car
 it is made from: pictures replace tiles everywhere, so they cannot tell

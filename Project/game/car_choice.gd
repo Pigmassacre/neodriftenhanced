@@ -101,6 +101,9 @@ enum {FADING_IN, CAR_ARRIVING, CHOOSING, TO_PREVIOUS, TO_NEXT, CHOSEN, FADING_OU
 ## while another comes (the original needs none: it has one half of each
 ## on screen at a time at most).
 var _leaving: Array[int] = []
+## The car slid away from, or -1 for the original's: the one beside the
+## car chosen (with the cars mods add, it may be the same car).
+var _from_car := -1
 
 
 func routines() -> Dictionary:
@@ -161,6 +164,8 @@ func _sprite(index: int) -> int:
 ## $15C16
 func forget_choice() -> void:
 	set16(CAR, 0)
+	for car in CAR_COUNT:
+		Mods.choose_car(m, car, 0)
 
 
 ## $15C20
@@ -168,6 +173,7 @@ func set_up() -> void:
 	m.call_routine(CLEAR_TEXT)
 	m.call_routine(CLEAR_SPRITES)
 	_leaving.clear()
+	_from_car = -1
 	(sibling(Palettes) as Palettes).choose_shades(0)
 	_fade(0)
 	set32(BACKDROP_X, -(PIECE_WIDTH << 16))
@@ -372,29 +378,41 @@ func slide_car_in() -> void:
 func read_joystick() -> void:
 	if s16(FRAMES_LEFT) > 0:
 		var joystick := (sibling(Joystick) as Joystick).read()
-		if joystick & Joystick.LEFT:
-			_request_sound(SOUND_MOVE)
-			set16(CAR, posmod(u16(CAR) - 1, CAR_COUNT))
-			set16(SLIDE_LEFT, SLIDE)
-			set8(STATE, TO_PREVIOUS)
-			return
-		if joystick & Joystick.RIGHT:
-			_request_sound(SOUND_MOVE)
-			set16(CAR, (u16(CAR) + 1) % CAR_COUNT)
-			set16(SLIDE_LEFT, SLIDE)
-			set8(STATE, TO_NEXT)
-			return
-		if joystick & (Joystick.UP | Joystick.DOWN) and m.car_variants.has(u16(CAR)):
-			# up and down: the cars mods add in this one's place (Mods.CarVariant)
-			var count: int = m.car_variants[u16(CAR)].size() + 1
-			var now: int = m.chosen_variants.get(u16(CAR), 0)
-			Mods.choose_car(m, u16(CAR), posmod(now + (1 if joystick & Joystick.DOWN else -1), count))
-			_request_sound(SOUND_MOVE)
-			return
+		for way: int in [-1, 1]:
+			if joystick & (Joystick.LEFT if way < 0 else Joystick.RIGHT):
+				_request_sound(SOUND_MOVE)
+				_to_choice(way)
+				set16(SLIDE_LEFT, SLIDE)
+				set8(STATE, TO_PREVIOUS if way < 0 else TO_NEXT)
+				return
 		if joystick & Joystick.BUTTON_A == 0:
 			return
 	_request_sound(SOUND_CHOSEN)
 	set8(STATE, CHOSEN)
+
+
+## The cars to choose from, in order, each [car, variant]: the game's
+## three, each followed by those mods add in its place (Mods.CarVariant).
+func _choices() -> Array:
+	var choices := []
+	for car in CAR_COUNT:
+		for variant in m.car_variants.get(car, []).size() + 1:
+			choices.append([car, variant])
+	return choices
+
+
+## Goes `way` along the cars: the one chosen becomes that one, and the one
+## left, if another car of the game's, is itself again.
+func _to_choice(way: int) -> void:
+	var choices := _choices()
+	var car := u16(CAR)
+	var now := choices.find([car, m.chosen_variants.get(car, 0)])
+	var next: Array = choices[posmod(now + way, choices.size())]
+	if next[0] != car:
+		Mods.choose_car(m, car, 0)
+	Mods.choose_car(m, next[0], next[1])
+	set16(CAR, next[0])
+	_from_car = car
 
 
 func _request_sound(sound: int) -> void:
@@ -529,8 +547,13 @@ func _widen() -> void:
 		var slide_width := SLIDE + m.view_margin * 2
 		var gone := (SLIDE - s16(SLIDE_LEFT)) * slide_width / SLIDE
 		var car := u16(CAR)
-		_show_whole_car(_leaving, posmod(car + way, CAR_COUNT), CAR_X_AT_REST + way * gone)
+		_show_whole_car(_leaving, _car_left(way), CAR_X_AT_REST + way * gone)
 		_show_whole_car(car_sprites, car, CAR_X_AT_REST + way * (gone - slide_width))
+
+
+## The car sliding out, `way` from the one chosen.
+func _car_left(way: int) -> int:
+	return _from_car if _from_car >= 0 else posmod(u16(CAR) + way, CAR_COUNT)
 
 
 ## $16554: every other frame the car is a pixel lower.
@@ -588,7 +611,7 @@ func slide(way: int) -> void:
 		set16(CAR_X, CAR_X_AT_REST)
 		set8(STATE, CHOOSING)
 	var car := u16(CAR)
-	var other := posmod(car + way, CAR_COUNT)
+	var other := _car_left(way)
 	if way > 0:
 		_show_right(other if left >= SLIDE_RIGHT_PART else car)
 		_show_left(other if left >= SLIDE_LEFT_PART else car)

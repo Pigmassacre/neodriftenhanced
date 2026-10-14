@@ -138,6 +138,16 @@ func apply_controls() -> void:
 				InputMap.action_add_event(name, event)
 
 
+## Godot's own actions for menus have no gamepad buttons to choose or go
+## back with: A chooses and B goes back.
+static func add_pad_to_menus() -> void:
+	for pair: Array in [["ui_accept", JOY_BUTTON_A], ["ui_cancel", JOY_BUTTON_B]]:
+		var button := InputEventJoypadButton.new()
+		button.button_index = pair[1]
+		if not InputMap.action_has_event(pair[0], button):
+			InputMap.action_add_event(pair[0], button)
+
+
 static func event_of(place: String) -> InputEvent:
 	var parts := place.split(":")
 	match parts[0]:

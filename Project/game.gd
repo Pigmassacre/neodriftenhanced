@@ -171,7 +171,8 @@ var _editing := ""
 var _log_sounds := false
 ## Says which car is chosen on the car choice when mods add cars.
 var _car_label: Label
-const CAR_NAMES := ["Celica", "Lancer", "Impreza"]
+## Where the car choice shows the name of the car, in the game's pixels.
+const NAME_BOX := Rect2(70, 180, 116, 26)
 ## What plays the sounds of mods (mods/mod_sounds.gd).
 var _mod_sounds := preload("res://mods/mod_sounds.gd").new()
 
@@ -211,6 +212,11 @@ var _presses := {}
 var _held: Key = KEY_NONE
 var _held_until := 0
 var _shot_tick := 0
+## The width of picture the last frame of the game was run for, and what
+## runs a frame for a wider one when the game is held (paused, or behind
+## the main menu) and the window has stopped growing.
+var _filled_width := 0
+var _fill_wider: Timer
 
 @onready var video: NeoGeoVideo = $Video
 @onready var sound: SoundBoard = $Sound
@@ -318,6 +324,7 @@ func _ready() -> void:
 		if arg.begins_with("--hud="):
 			_settings.hud = maxi(Settings.HUD_NAMES.find(arg.trim_prefix("--hud=").capitalize()), 0)
 	_settings.apply_controls()
+	Settings.add_pad_to_menus()
 	if not use_sound or not sound.load_roms(MachineLoader.repo_dir().path_join("neodrift")):
 		sound = null
 	if sound != null:
@@ -347,6 +354,14 @@ func _ready() -> void:
 	_set_up_screen()
 	_map.fades = shot_frames.is_empty()
 	_hud.fades = shot_frames.is_empty()
+	_fill_wider = Timer.new()
+	_fill_wider.one_shot = true
+	_fill_wider.wait_time = 0.2
+	_fill_wider.timeout.connect(func() -> void:
+		if _is_held() and video.view_width > _filled_width and not machine.halted:
+			_step()
+			_refresh())
+	add_child(_fill_wider)
 	get_viewport().size_changed.connect(_fit_view)
 	if with_menu:
 		_set_up_menu()
@@ -762,11 +777,11 @@ func _set_up_screen() -> void:
 	_picture.add_child(_hud)
 	_car_label = Label.new()
 	_car_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_car_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
-	_car_label.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.07))
+	_car_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_car_label.clip_text = true
+	_car_label.uppercase = true
 	var backing := StyleBoxFlat.new()
-	backing.bg_color = Color(0.02, 0.03, 0.07, 0.7)
-	backing.set_corner_radius_all(6)
+	backing.bg_color = Color.BLACK
 	_car_label.add_theme_stylebox_override("normal", backing)
 	_car_label.visible = false
 	_picture.add_child(_car_label)
@@ -787,7 +802,6 @@ func _fit_view() -> void:
 		width = _forced_width
 	elif not _settings.wide:
 		width = int(NeoGeoVideo.SCREEN.x)
-	var width_before := video.view_width
 	video.view_width = mini(width, WIDEST_VIEW) & ~1
 	var game_size := Vector2i(video.view_width, int(NeoGeoVideo.SCREEN.y))
 	_fine = clampi(mini(_replaced_scale, floori(_pixel)), 1, _replaced_scale)
@@ -809,13 +823,11 @@ func _fit_view() -> void:
 		machine.view_margin = video.margin()
 	_show_crt()
 	if _is_held():
-		if video.view_width != width_before and not machine.halted:
+		_refresh(true)
+		if video.view_width > _filled_width and not machine.halted:
 			# what a wider picture shows more of is the game's to find, and it
-			# does in a frame
-			_step()
-			_refresh()
-		else:
-			_refresh(true)
+			# does in a frame: one, once the window has stopped changing size
+			_fill_wider.start()
 
 
 func _show_crt() -> void:
@@ -1012,28 +1024,27 @@ func _refresh(again := false) -> void:
 	_show_car_variant()
 
 
-## On the car choice, the name of the car chosen when mods add cars in
-## its place, and that up and down choose another.
+## On the car choice, the name of the car chosen when it is one a mod
+## adds, which the game's own name of the car it is based on would not tell.
 func _show_car_variant() -> void:
 	if _car_label == null:
 		return
 	var car: int = machine.ram.decode_u16(CarChoice.CAR & 0xFFFF)
-	_car_label.visible = machine.choosing_car and machine.car_variants.has(car) and _state != IN_MENU
+	var chosen: int = machine.chosen_variants.get(car, 0)
+	_car_label.visible = machine.choosing_car and chosen > 0 and _state != IN_MENU
 	if not _car_label.visible:
 		return
-	var chosen: int = machine.chosen_variants.get(car, 0)
-	var variants: Array = machine.car_variants[car]
-	var name: String = CAR_NAMES[car] if chosen == 0 else (variants[chosen - 1] as Mods.CarVariant).name
-	_car_label.text = "▲  %s  ▼\n%d of %d, up and down for another" % [name, chosen + 1, variants.size() + 1]
-	var height := _picture.size.y
-	_car_label.add_theme_font_size_override("font_size", maxi(int(height * 0.04), 12))
-	_car_label.add_theme_constant_override("outline_size", maxi(int(height * 0.008), 2))
-	var backing := _car_label.get_theme_stylebox("normal") as StyleBoxFlat
-	backing.content_margin_left = height * 0.03
-	backing.content_margin_right = height * 0.03
-	_car_label.size = Vector2.ZERO
-	_car_label.reset_size()
-	_car_label.position = Vector2((_picture.size.x - _car_label.size.x) / 2.0, height * 0.66)
+	_car_label.text = (machine.car_variants[car][chosen - 1] as Mods.CarVariant).name
+	# over the name of the car on the panel under it, in the game's pixels
+	var name_box := Rect2(NAME_BOX.position + Vector2(video.margin(), 0), NAME_BOX.size)
+	_car_label.position = name_box.position * _pixel
+	_car_label.size = name_box.size * _pixel
+	var font := _car_label.get_theme_font("font")
+	var font_size := int(name_box.size.y * 0.75 * _pixel)
+	while font_size > 8 and font.get_string_size(_car_label.text.to_upper(), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x \
+			> name_box.size.x * _pixel:
+		font_size -= 1
+	_car_label.add_theme_font_size_override("font_size", font_size)
 
 
 func _step() -> void:
@@ -1078,6 +1089,7 @@ func _step() -> void:
 	var started := Time.get_ticks_usec()
 	machine.choosing_car = false
 	machine.run_frame()
+	_filled_width = video.view_width
 	if not machine.sounds_taken.is_empty():
 		if sound != null and not silent:
 			_mod_sounds.play_taken(machine)

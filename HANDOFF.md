@@ -612,9 +612,11 @@ used by the hand-written game, never in an automated run unless named
 - **Added cars** (`[car] adds=true`): `Mods._add_car` applies the mod with
   `write_rom` recording instead of writing (`_recorded`), and keeps the
   bytes as a `CarVariant`; `Mods.choose_car` writes them in and out of the
-  ROM. `car_choice.gd`'s `read_joystick` takes up and down for it (only
-  with variants, so the original's behaviour is untouched), sets
-  `NeoGeoMachine.choosing_car`, and `game.gd` labels the choice. An added
+  ROM. `car_choice.gd`'s `read_joystick` goes left and right through
+  `_choices()`, each added car after the one it is based on (with none,
+  the original's three in its order), slides from `_from_car`, sets
+  `NeoGeoMachine.choosing_car`, and `game.gd` labels an added car with its
+  name. An added
   car looks like its base: tiles are replaced for every car alike.
 - **`--dump-graphics`** (`mods/graphics_dump.gd`) saves what is shown, from
   the object records, the ground's blocks and the text layer's cells.

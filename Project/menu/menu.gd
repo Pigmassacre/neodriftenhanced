@@ -491,15 +491,23 @@ func _slide_in(arriving: bool) -> void:
 	for thing in things:
 		if thing.has_meta("sliding"):
 			(thing.get_meta("sliding") as Tween).kill()
-		var to := thing.position.x
-		thing.position.x = to + from
+		thing.set_meta("home", thing.position.x - float(thing.get_meta("shift", 0.0)))
+		_offset(from, thing, "slide")
 		thing.modulate.a = 0.0
 		var tween := thing.create_tween().set_parallel()
 		thing.set_meta("sliding", tween)
-		tween.tween_property(thing, "position:x", to, SLIDE_TIME).set_delay(delay) \
+		tween.tween_method(_offset.bind(thing, "slide"), from, 0.0, SLIDE_TIME).set_delay(delay) \
 				.set_trans(Tween.TRANS_EXPO).set_ease(Tween.EASE_OUT)
 		tween.tween_property(thing, "modulate:a", 1.0, SLIDE_TIME * 0.6).set_delay(delay)
 		delay += STAGGER
+
+
+## A row is where it slides in from and, when chosen, out to, at once: its
+## "home" with its "slide" and its "shift" added.
+func _offset(value: float, thing: Control, part: String) -> void:
+	thing.set_meta(part, value)
+	thing.position.x = float(thing.get_meta("home", 0.0)) + float(thing.get_meta("slide", 0.0)) \
+			+ float(thing.get_meta("shift", 0.0))
 
 
 func _clear_rows() -> void:
@@ -597,7 +605,8 @@ func _chosen(button: Button, chosen: bool) -> void:
 	tween.tween_method(func(value: float) -> void: material.set_shader_parameter("chosen", value),
 			float(material.get_shader_parameter("chosen")), 1.0 if chosen else 0.0, CHOOSE_TIME)
 	if button.get_parent() == _list:
-		tween.tween_property(button, "position:x", CHOSEN_SHIFT * _unit if chosen else 0.0, CHOOSE_TIME * 1.5) \
+		tween.tween_method(_offset.bind(button, "shift"), float(button.get_meta("shift", 0.0)),
+				CHOSEN_SHIFT * _unit if chosen else 0.0, CHOOSE_TIME * 1.5) \
 				.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	button.set_meta("moving", tween)
 	for part: Control in button.get_meta("inked"):

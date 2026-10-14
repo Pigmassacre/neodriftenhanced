@@ -54,3 +54,10 @@
     ground codes, start, times, checkpoints and the other cars' route; listed in Freeplay
   - [x] Etc: any table of the program ROM
 - [x] Mods: scenery of a course's own, a fourth car and more, sounds
+
+## Feedback
+
+- [x] Menus: the chosen row slides in faster than the others
+- [x] Menus: the gamepad cannot choose a row
+- [x] Resizing the window while paused runs the game a frame per resize step
+- [x] Added cars come in the car choice's left and right, not up and down

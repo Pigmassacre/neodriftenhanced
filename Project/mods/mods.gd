@@ -49,7 +49,7 @@ class Extra:
 
 
 ## A car a mod adds (`[car] adds = true`): one of the game's three
-## changed, chosen on the car choice in its place, with up and down.
+## changed, after it on the car choice.
 class CarVariant:
 	var car := 0
 	var name := ""

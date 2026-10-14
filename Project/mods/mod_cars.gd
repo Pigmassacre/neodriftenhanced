@@ -5,8 +5,8 @@ extends RefCounted
 ##
 ##     [car]
 ##     replaces = 1          ; which car: 0, 1 or 2, as the car choice has them
-##     adds = false          ; true: a car of its own, chosen in place of
-##                           ; that one with up and down on the car choice
+##     adds = false          ; true: a car of its own, after that one
+##                           ; on the car choice
 ##     name = "Lancer Evo"   ; its name there
 ##     top_speed = 1.1       ; on every surface and as the car wears down
 ##     acceleration = 1.2
