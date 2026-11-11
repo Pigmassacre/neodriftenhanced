@@ -91,7 +91,8 @@ var _progress: LineEdit
 var _rivals: LineEdit
 var _name: LineEdit
 var _time: LineEdit
-var _music: OptionButton
+## The music's name, between the buttons that step through the choices.
+var _music: Label
 var _arcade: CheckBox
 var _codes_check: CheckBox
 var _confirm: ConfirmationDialog
@@ -201,7 +202,7 @@ func _build() -> void:
 		_view.queue_redraw())
 	_follow_check = _check(bar, "Follow road (F)", true, func(on: bool) -> void:
 		_view.set_follow(on))
-	_follow_check.tooltip_text = "Scrolling follows the other cars' route, from the start to the finish, across the edges of the map."
+	_hint(_follow_check, "Scrolling follows the other cars' route, from the start to the finish, across the edges of the map.")
 	_view = CourseView.new()
 	_view.editor = self
 	_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -266,16 +267,16 @@ func _build() -> void:
 	var music_label := Label.new()
 	music_label.text = "Music"
 	row.add_child(music_label)
-	_music = OptionButton.new()
-	for course in ModCourses.COURSE_COUNT:
-		_music.add_item("Practice" if course == 0 else "Stage %d" % course, course)
-	_music.item_selected.connect(func(index: int) -> void:
-		data.music = index
-		_dirty = true)
+	# steps rather than a drop-down: see _hint
+	_button(row, "‹", _step_music.bind(-1))
+	_music = Label.new()
+	_music.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_music.custom_minimum_size.x = 80
 	row.add_child(_music)
+	_button(row, "›", _step_music.bind(1))
 	_arcade = CheckBox.new()
 	_arcade.text = "In Arcade"
-	_arcade.tooltip_text = "Replaces the course it is based on in Arcade."
+	_hint(_arcade, "Replaces the course it is based on in Arcade.")
 	_arcade.toggled.connect(func(on: bool) -> void:
 		data.arcade = on
 		_dirty = true)
@@ -311,7 +312,7 @@ func _theme() -> Theme:
 	lit.bg_color = Color(0.2, 0.23, 0.29)
 	var on := flat.duplicate() as StyleBoxFlat
 	on.bg_color = Color(1.0, 0.42, 0.08)
-	for kind in ["Button", "OptionButton"]:
+	for kind in ["Button"]:
 		made.set_stylebox("normal", kind, flat)
 		made.set_stylebox("hover", kind, lit)
 		made.set_stylebox("pressed", kind, on)
@@ -365,7 +366,31 @@ func _button(parent: Control, text: String, pressed: Callable) -> Button:
 	return button
 
 
+## Shows `text` in the status line while the mouse is over `control`. The
+## editor opens no tooltips, drop-downs or right-click menus: Godot 4.7.2's
+## release builds print errors each time such a popup closes. Tooltips are
+## off for the whole game (project.godot's gui/timers/tooltip_delay_sec).
+func _hint(control: Control, text: String) -> void:
+	control.mouse_entered.connect(func() -> void: _status.text = text)
+
+
+func _step_music(step: int) -> void:
+	data.music = posmod(data.music + step, ModCourses.COURSE_COUNT)
+	_dirty = true
+	_show_music()
+
+
+func _show_music() -> void:
+	data.music = clampi(data.music, 0, ModCourses.COURSE_COUNT - 1)
+	_music.text = "Practice" if data.music == 0 else "Stage %d" % data.music
+
+
 func _field(parent: Control, text: String, control: Control) -> Control:
+	# no right-click menu (see _hint); the keys still cut, copy and paste
+	if control is LineEdit:
+		(control as LineEdit).context_menu_enabled = false
+	elif control is SpinBox:
+		(control as SpinBox).get_line_edit().context_menu_enabled = false
 	var label := Label.new()
 	label.text = text
 	label.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
@@ -404,6 +429,15 @@ func _list(parent: Control, icons: bool) -> ItemList:
 func _build_cells(palette: VBoxContainer) -> void:
 	_note(palette, "This course's cells, in the order the road reaches them from the start, so pieces that go side by side are together. Cells the map does not use are last, darker.")
 	_cell_list = _list(palette, true)
+	_cell_list.gui_input.connect(func(event: InputEvent) -> void:
+		var motion := event as InputEventMouseMotion
+		if motion == null:
+			return
+		var index := _cell_list.get_item_at_position(motion.position, true)
+		if index >= 0:
+			var cell: int = _cell_list.get_item_metadata(index)
+			var uses := data.uses_of(cell)
+			_status.text = "Cell %d, used %d times" % [cell, uses] if uses > 0 else "Cell %d, not on the map" % cell)
 	_cell_list.item_selected.connect(func(index: int) -> void:
 		chosen_cell = _cell_list.get_item_metadata(index)
 		stamp = [])
@@ -431,10 +465,7 @@ func _fill_cells() -> void:
 		var cell := order[position]
 		var index := _cell_list.add_item(str(cell), cell_texture(cell))
 		_cell_list.set_item_metadata(index, cell)
-		if position < used:
-			_cell_list.set_item_tooltip(index, "Cell %d, used %d times" % [cell, data.uses_of(cell)])
-		else:
-			_cell_list.set_item_tooltip(index, "Cell %d, not on the map" % cell)
+		if position >= used:
 			_cell_list.set_item_custom_bg_color(index, Color(0, 0, 0, 0.5))
 			_cell_list.set_item_custom_fg_color(index, Color(0.5, 0.5, 0.55))
 		if cell == chosen_cell:
@@ -594,7 +625,7 @@ func _fill_settings() -> void:
 	_filling_fields = true
 	_name.text = data.name
 	_time.text = ", ".join(data.time.map(func(value: Variant) -> String: return str(value)))
-	_music.select(clampi(data.music, 0, ModCourses.COURSE_COUNT - 1))
+	_show_music()
 	_arcade.button_pressed = data.arcade
 	_facing.value = data.facing
 	_progress.text = ", ".join(data.progress.map(func(value: Variant) -> String: return str(int(value))))

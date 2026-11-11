@@ -6,7 +6,8 @@ extends Node
 ## `-- --masher <seed> [--seconds N] [--close-at F] [--no-quit]`. --close-at
 ## closes the window at frame F, as a player does, instead of quitting when
 ## time is up; --no-quit presses nothing but up and down while Quit to
-## desktop has the focus, so the game is still there to close.
+## desktop has the focus, and clicks nowhere on it, so the game is still
+## there to close.
 ##
 ## It plays as a player, with the files of its user data directory (so run
 ## it with one of its own), and sends its input through
@@ -353,6 +354,8 @@ func _move_mouse(point: Vector2, dragging := false) -> void:
 
 
 func _click(point: Vector2, button: MouseButton) -> void:
+	if _no_quit and _over_quit(point):
+		return
 	_used_keys_or_pad = false
 	_move_mouse(point)
 	var click := InputEventMouseButton.new()
@@ -401,6 +404,23 @@ func _collect_controls(node: Node, candidates: Array[Control]) -> void:
 			if control.is_visible_in_tree() and not _quits(control):
 				candidates.append(control)
 		_collect_controls(child, candidates)
+
+
+## Whether `point` is on a shown Quit to desktop row.
+func _over_quit(point: Vector2) -> bool:
+	var rows: Array[Control] = []
+	_collect_quit_rows(get_tree().root, rows)
+	for row in rows:
+		if row.get_global_rect().grow(4.0).has_point(point):
+			return true
+	return false
+
+
+func _collect_quit_rows(node: Node, rows: Array[Control]) -> void:
+	for child in node.get_children():
+		if child is Button and (child as Control).is_visible_in_tree() and _quits(child):
+			rows.append(child)
+		_collect_quit_rows(child, rows)
 
 
 static func _quits(control: Control) -> bool:
