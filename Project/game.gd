@@ -407,6 +407,7 @@ func _start_machine() -> bool:
 			kept = FileAccess.get_file_as_bytes(_best_times())
 		Decomp.power_on(machine, kept)
 		_times_kept = Decomp.kept_times(machine)
+		_apply_difficulty()
 	elif MachineLoader.load_snapshot(machine, _snapshot) != OK:
 		machine = null
 		return false
@@ -467,12 +468,25 @@ func _apply_settings(section: String) -> void:
 		"mods":
 			_mods_changed = true
 		"game":
+			_apply_difficulty()
 			_map.wanted = _settings.map
 			_hud.wanted = _settings.hud == Settings.HUD_NEW and video.scene != null
 			_choose_hud()
 	if _is_held():
 		# nothing else will draw it anew
 		_refresh(true)
+
+
+## Sets the board's difficulty to the player's, and the game's own copies of
+## it too, so a change in the menu counts from the next race on without the
+## board being started again. A board started from a snapshot keeps its own.
+func _apply_difficulty() -> void:
+	if machine == null or _from_snapshot:
+		return
+	var level := clampi(_settings.difficulty, 0, Settings.DIFFICULTY_NAMES.size() - 1)
+	machine.w8(Decomp.TopOfGame.SYSTEM_SETTINGS, level)
+	machine.w16(Decomp.TopOfGame.SETTINGS, level)
+	machine.w16(Decomp.TopOfGame.LEVEL_TIMES_TWO, level * 2)
 
 
 ## Whether the original's HUD is left out: for one of our own, which takes
