@@ -308,10 +308,11 @@ func place_corner(place: int) -> Vector2i:
 	return Vector2i(place % across * CELL, place / across * CELL)
 
 
-## The place at a position of the course, which goes round across.
+## The place at a position of the course, which goes round both ways (as
+## the game takes a position's cell modulo the map's size).
 func place_at(at: Vector2i) -> int:
 	var column := posmod(at.x >> 8, across)
-	var row := clampi(at.y >> 8, 0, down - 1)
+	var row := posmod(at.y >> 8, down)
 	return row * across + column
 
 
