@@ -600,7 +600,12 @@ used by the hand-written game, never in an automated run unless named
   the mod on and starts its course; going back to the menu from that
   (`_to_main_menu`) opens the editor again while `_editing` is set. Undo
   keeps the values a step changed from (`_step`, by key such as `map`,
-  `scenery`, `codes:N`).
+  `scenery`, `codes:N`). The map wraps both ways (`CourseData.place_at`
+  takes rows modulo too, as `game/ground.gd` does), so the view draws it
+  without edges; scenery is kept at positions on the map
+  (`CourseEditor.wrapped`), while waypoints and the start stay unwrapped,
+  as the game has them. With Follow road on, the view scrolls by distance
+  along the waypoints' line (`along`, `offset` in `course_view.gd`).
 - **Sounds** (`mods/mod_sounds.gd`): `SoundRequests.request` keeps the
   numbers mods replace from the sound board; while any are replaced it
   lists every request in `NeoGeoMachine.sounds_taken`, in order, with

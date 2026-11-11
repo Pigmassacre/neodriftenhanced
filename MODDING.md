@@ -166,10 +166,13 @@ as a mod in the game's user folder (`mods/course_...`), and **Test drive**
 saves it and drives it, then comes back. Its tools, picked with the
 buttons along the top or the keys 1 to 6:
 
-- **Cells**: put cells on the map (each comes with its scenery). Right
-  click takes the cell under the mouse. **Give the place a cell of its
-  own** makes a copy only that place shows, to paint its ground alone or
-  its picture in a paint program (`course/cells/NUMBER.png`).
+- **Cells**: put cells on the map (each comes with its scenery). The list
+  has them in the order the road reaches them, so pieces that go side by
+  side are side by side there too. Right click takes the cell under the
+  mouse; right drag picks up a block of cells, to put down together.
+  **Make cell unique** makes a copy only that place shows, to paint its
+  ground alone or its picture in a paint program
+  (`course/cells/NUMBER.png`).
 - **Ground**: paint the ground codes (G shows them on any tool). A cell's
   codes are the same wherever the cell is.
 - **Scenery**: put things beside the road, drag them, right click or
@@ -181,17 +184,26 @@ buttons along the top or the keys 1 to 6:
   the lines of the bar that shows how far along the car is.
 - **Signs**: the signs of the turns ahead, by place.
 
-The wheel zooms, the middle button (or Space and the left) drags the
-view, Ctrl and the wheel goes through the palette, Ctrl+Z and Ctrl+Y undo
-and redo, Ctrl+S saves. Name, times, music and Arcade are at the side.
+The map goes round both ways (see below), so the view has no edges: it
+shows the map again wherever it looks, with a dashed line where it starts
+again. With **Follow road** on (F), the wheel scrolls along the other
+cars' route from the start to the finish, however often it crosses the
+map's edges; Home goes back to the middle of the road, and the picture of
+the route in the corner jumps to where it is clicked. Ctrl and the wheel
+zooms, Shift and the wheel scrolls sideways, the middle button (or Space
+and the left) drags the view, [ and ] go through the list, Ctrl+Z and
+Ctrl+Y undo and redo, Ctrl+S saves. Name, times, music and Arcade are at
+the side.
 
 What the editor writes is what follows: a course can be made or changed
 by hand just as well.
 
 A course is a map of cells. Each cell is 256 by 256 pixels, and has its
 picture, its ground codes (what a car finds there) and its scenery. The
-map is 16 cells across and 128 down. A course goes round and round across
-it, so the road leaving it at the right comes back at the left.
+map is 16 cells across and 128 down, and goes round both ways: the road
+leaving it at the right comes back at the left, and the road leaving it at
+the top comes back at the bottom (the game's positions are 16 bits, so a y
+above the top counts down from 65535). Most courses do both.
 
 Start from one of the game's courses:
 

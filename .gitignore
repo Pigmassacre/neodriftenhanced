@@ -1,9 +1,9 @@
 Godot
-neodrift/
-neogeo/
+/neodrift
+/neogeo
 Tools/__pycache__/
 Builds/
-data/
+/data
 Project/.godot/
 
 # mods are the player's, and often made from pictures of the ROM

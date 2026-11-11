@@ -8,7 +8,8 @@ extends Control
 ##
 ## Its tools, each with a palette at the side:
 ##
-## - Cells: puts cells on the map, and gives a place a cell of its own.
+## - Cells: puts cells on the map, one or a block picked up from the map,
+##   and gives a place a cell of its own.
 ## - Ground: paints the ground codes of cells (walls, edges, surfaces,
 ##   gates).
 ## - Scenery: puts things beside the road, moves them and takes them away.
@@ -33,7 +34,7 @@ const CourseView := preload("res://editor/course_view.gd")
 enum Tool {CELLS, GROUND, SCENERY, ROUTE, START, SIGNS}
 const TOOL_NAMES := ["Cells", "Ground", "Scenery", "Route", "Start", "Signs"]
 const TOOL_HELP := [
-	"Left-click: place the selected cell (with its scenery).  Right-click: pick the cell under the cursor.",
+	"Left-click: place the selected cell (with its scenery).  Right-click: pick up the cell under the cursor, or drag to pick up a block of cells.",
 	"Left-click: paint the selected code.  Right-click: pick the code under the cursor.  This changes every copy of the cell; make it unique first to change just one spot.",
 	"Left-click: place the selected object, or drag one to move it.  Right-click: delete it.",
 	"Left-click: select and drag a box (drag its corner to resize), or add a box after the selected one.  Right-click: delete a box.",
@@ -48,6 +49,7 @@ const DRAW_BUDGET_MSEC := 12
 const UNDO_STEPS := 200
 ## The signs the game has.
 const SIGNS := 32
+const VIEW_HELP := "Wheel: scroll along the road.  Ctrl+wheel: zoom.  Middle-drag or Space+drag: move the view.  F: follow the road on or off.  Home: back to the road.  [ and ]: previous and next in the list."
 ## A new box of the route.
 const NEW_BOX := Vector2i(192, 128)
 
@@ -66,10 +68,17 @@ var chosen_sign := 1
 var selected_thing := -1
 var selected_point := -1
 var selected_line := -1
+## A block of cells picked up from the map to put down together: rows of
+## cell numbers. Empty: the chosen cell alone.
+var stamp: Array = []
+## Picking up a block with the right button: where it started.
+var picking := false
+var _pick_from := Vector2i.ZERO
 
 var _view: CourseView
 var _status: Label
 var _help: Label
+var _follow_check: CheckBox
 var _tool_buttons: Array[Button] = []
 var _palettes: Array[Control] = []
 var _cell_list: ItemList
@@ -119,6 +128,11 @@ func open(path: String, base := 1) -> void:
 		ExportCourse.export_course(machine, base, path, true)
 	folder = path
 	data = CourseData.from_mod(machine, folder)
+	# kept on the map, as the course goes round both ways
+	for index in data.scenery.size():
+		var thing := data.scenery[index]
+		var at := wrapped(Vector2i(thing.x, thing.y))
+		data.scenery[index] = Vector3i(at.x, at.y, thing.z)
 	_set_up_offsets()
 	_build()
 	_fill_settings()
@@ -160,9 +174,10 @@ func _build() -> void:
 
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.custom_minimum_size.x = 200
 	left.add_theme_constant_override("separation", 0)
 	columns.add_child(left)
-	var bar := HBoxContainer.new()
+	var bar := HFlowContainer.new()
 	left.add_child(_padded(bar, Color(0.09, 0.1, 0.13)))
 	var group := ButtonGroup.new()
 	for index in TOOL_NAMES.size():
@@ -174,7 +189,7 @@ func _build() -> void:
 		button.pressed.connect(_choose_tool.bind(index))
 		bar.add_child(button)
 		_tool_buttons.append(button)
-	bar.add_child(_spacer())
+	bar.add_child(VSeparator.new())
 	_codes_check = _check(bar, "Ground codes (G)", show_codes, func(on: bool) -> void:
 		show_codes = on
 		_view.queue_redraw())
@@ -184,6 +199,9 @@ func _build() -> void:
 	_check(bar, "Route", show_route, func(on: bool) -> void:
 		show_route = on
 		_view.queue_redraw())
+	_follow_check = _check(bar, "Follow road (F)", true, func(on: bool) -> void:
+		_view.set_follow(on))
+	_follow_check.tooltip_text = "Scrolling follows the other cars' route, from the start to the finish, across the edges of the map."
 	_view = CourseView.new()
 	_view.editor = self
 	_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -194,6 +212,12 @@ func _build() -> void:
 	_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_help.add_theme_color_override("font_color", Color(0.94, 0.95, 0.98))
 	foot.add_child(_help)
+	var view_help := Label.new()
+	view_help.text = VIEW_HELP
+	view_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	view_help.add_theme_font_size_override("font_size", 12)
+	view_help.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
+	foot.add_child(view_help)
 	_status = Label.new()
 	_status.add_theme_color_override("font_color", Color(0.6, 0.65, 0.72))
 	foot.add_child(_status)
@@ -378,10 +402,11 @@ func _list(parent: Control, icons: bool) -> ItemList:
 # --- the palettes ------------------------------------------------------------
 
 func _build_cells(palette: VBoxContainer) -> void:
-	_note(palette, "This course's cells. Those used on the map come first.")
+	_note(palette, "This course's cells, in the order the road reaches them from the start, so pieces that go side by side are together. Cells the map does not use are last, darker.")
 	_cell_list = _list(palette, true)
 	_cell_list.item_selected.connect(func(index: int) -> void:
-		chosen_cell = _cell_list.get_item_metadata(index))
+		chosen_cell = _cell_list.get_item_metadata(index)
+		stamp = [])
 	_button(palette, "Make cell unique", _own_cell)
 	_note(palette, "A unique cell is a copy used in only one spot. You can paint its ground codes separately, and edit its picture (course/cells/NUMBER.png in the mod folder) in any paint program.")
 	_fill_cells()
@@ -389,24 +414,60 @@ func _build_cells(palette: VBoxContainer) -> void:
 
 func _fill_cells() -> void:
 	_cell_list.clear()
-	var order: Array[int] = []
+	var order := _cells_along_road()
 	var seen := {}
+	for cell in order:
+		seen[cell] = true
+	# then the rest of the map, row by row
 	for cell in data.map:
 		if not seen.has(cell):
 			seen[cell] = true
 			order.append(cell)
-	order.sort()
-	var rest: Array[int] = []
+	var used := order.size()
 	for cell in data.game_cells:
 		if not seen.has(cell):
-			rest.append(cell)
-	order.append_array(rest)
-	for cell in order:
+			order.append(cell)
+	for position in order.size():
+		var cell := order[position]
 		var index := _cell_list.add_item(str(cell), cell_texture(cell))
 		_cell_list.set_item_metadata(index, cell)
-		_cell_list.set_item_tooltip(index, "Cell %d, used %d times" % [cell, data.uses_of(cell)])
+		if position < used:
+			_cell_list.set_item_tooltip(index, "Cell %d, used %d times" % [cell, data.uses_of(cell)])
+		else:
+			_cell_list.set_item_tooltip(index, "Cell %d, not on the map" % cell)
+			_cell_list.set_item_custom_bg_color(index, Color(0, 0, 0, 0.5))
+			_cell_list.set_item_custom_fg_color(index, Color(0.5, 0.5, 0.55))
 		if cell == chosen_cell:
 			_cell_list.select(index)
+
+
+## The cells the road goes through, and those beside them, in the order
+## the other cars' route reaches them, each row of a place left to right.
+func _cells_along_road() -> Array[int]:
+	var order: Array[int] = []
+	var seen := {}
+	# the cell most of the map is (grass, say) is not part of the road
+	var counts := {}
+	for cell in data.map:
+		counts[cell] = counts.get(cell, 0) + 1
+	var commonest := -1
+	for cell: int in counts:
+		if commonest < 0 or counts[cell] > counts[commonest]:
+			commonest = cell
+	seen[commonest] = true
+	var step := CourseData.CELL / 4.0
+	for index in range(1, data.waypoints.size()):
+		var from := Vector2(data.waypoints[index - 1][0], data.waypoints[index - 1][1])
+		var to := Vector2(data.waypoints[index][0], data.waypoints[index][1])
+		var steps := maxi(ceili(from.distance_to(to) / step), 1)
+		for part in steps:
+			var at := Vector2i(from.lerp(to, float(part) / steps))
+			for across in [-1, 0, 1]:
+				var cell := data.map[data.place_at(at + Vector2i(across * CourseData.CELL, 0))]
+				if not seen.has(cell):
+					seen[cell] = true
+					order.append(cell)
+	return order
 
 
 func _build_ground(palette: VBoxContainer) -> void:
@@ -690,10 +751,10 @@ func view_pressed(at: Vector2i, button: int, event: InputEventMouseButton) -> vo
 	match tool:
 		Tool.CELLS:
 			if button == MOUSE_BUTTON_LEFT:
-				_put_cell(place)
+				_put_stamp(at)
 			elif button == MOUSE_BUTTON_RIGHT:
-				_choose_in(_cell_list, data.map[place])
-				chosen_cell = data.map[place]
+				picking = true
+				_pick_from = _cell_of(at)
 		Tool.GROUND:
 			if button == MOUSE_BUTTON_LEFT:
 				_paint_codes(at)
@@ -706,7 +767,8 @@ func view_pressed(at: Vector2i, button: int, event: InputEventMouseButton) -> vo
 			if button == MOUSE_BUTTON_LEFT:
 				_remember("scenery")
 				if found < 0:
-					data.scenery.append(Vector3i(at.x, at.y, chosen_kind))
+					var spot := wrapped(at)
+					data.scenery.append(Vector3i(spot.x, spot.y, chosen_kind))
 					found = data.scenery.size() - 1
 					_changed()
 				else:
@@ -714,7 +776,7 @@ func view_pressed(at: Vector2i, button: int, event: InputEventMouseButton) -> vo
 					_choose_in(_kind_list, chosen_kind)
 				selected_thing = found
 				_dragging = "thing"
-				_grab = at - Vector2i(data.scenery[found].x, data.scenery[found].y)
+				_grab = wrapped_difference(at - Vector2i(data.scenery[found].x, data.scenery[found].y))
 			elif button == MOUSE_BUTTON_RIGHT and found >= 0:
 				_remember("scenery")
 				data.scenery.remove_at(found)
@@ -735,7 +797,7 @@ func view_pressed(at: Vector2i, button: int, event: InputEventMouseButton) -> vo
 			if event.shift_pressed:
 				_face_towards(at)
 			else:
-				data.start = at
+				data.start = _clamp16(at)
 				_dragging = "start"
 			_changed()
 		Tool.SIGNS:
@@ -748,31 +810,34 @@ func view_pressed(at: Vector2i, button: int, event: InputEventMouseButton) -> vo
 func view_moved(at: Vector2i, buttons: int, event: InputEventMouseMotion) -> void:
 	var place := data.place_at(at)
 	_show_status(at)
+	if picking:
+		return
 	if buttons & MOUSE_BUTTON_MASK_LEFT == 0:
 		return
 	match tool:
 		Tool.CELLS:
 			if place != _last_place:
 				_last_place = place
-				_put_cell(place)
+				_put_stamp(at)
 		Tool.GROUND:
 			_paint_codes(at)
 		Tool.SCENERY:
 			if _dragging == "thing" and selected_thing >= 0:
-				var moved := at - _grab
-				data.scenery[selected_thing] = Vector3i(moved.x, maxi(moved.y, 0), data.scenery[selected_thing].z)
+				var moved := wrapped(at - _grab)
+				data.scenery[selected_thing] = Vector3i(moved.x, moved.y, data.scenery[selected_thing].z)
 				_changed()
 		Tool.ROUTE:
 			_drag_route(at)
 		Tool.START:
 			if _dragging == "line" and selected_line >= 0:
-				data.progress[selected_line] = clampi(at.y, 0, data.down * CourseData.CELL - 1)
+				# the game's y is 16 bits, so above the top it counts down from 65535
+				data.progress[selected_line] = posmod(at.y, 0x10000)
 				_changed()
 			elif _dragging == "start":
 				if event.shift_pressed:
 					_face_towards(at)
 				else:
-					data.start = at
+					data.start = _clamp16(at)
 				_changed()
 		Tool.SIGNS:
 			if place != _last_place:
@@ -782,7 +847,10 @@ func view_moved(at: Vector2i, buttons: int, event: InputEventMouseMotion) -> voi
 				_changed()
 
 
-func view_released(_at: Vector2i, _button: int) -> void:
+func view_released(at: Vector2i, button: int) -> void:
+	if picking and button == MOUSE_BUTTON_RIGHT:
+		picking = false
+		_pick_up(picked_rect(_cell_of(at)))
 	_dragging = ""
 	if not _step.is_empty():
 		_undo.append(_step)
@@ -793,7 +861,7 @@ func view_released(_at: Vector2i, _button: int) -> void:
 	_fill_settings()
 
 
-## Ctrl and the wheel: the next or the one before in the palette.
+## [ and ]: the next or the one before in the palette.
 func view_wheel(way: int) -> void:
 	var list: ItemList = [_cell_list, _code_list, _kind_list, null, null, _sign_list][tool]
 	if list == null or list.item_count == 0:
@@ -809,7 +877,7 @@ func _show_status(at: Vector2i) -> void:
 	var place := data.place_at(at)
 	var cell := data.map[place]
 	_status.text = "x %d  y %d    place %d (column %d, row %d)    cell %d, at %d places    code %d    %s" % [
-		posmod(at.x, data.across * CourseData.CELL), at.y, place, place % data.across, place / data.across,
+		posmod(at.x, data.across * CourseData.CELL), posmod(at.y, 0x10000), place, place % data.across, place / data.across,
 		cell, data.uses_of(cell), _code_at(at), "unsaved changes" if _dirty else "saved"]
 
 
@@ -821,8 +889,54 @@ func _choose_in(list: ItemList, value: int) -> void:
 			return
 
 
-func _put_cell(place: int) -> void:
-	if data.map[place] == chosen_cell:
+## The cell at a position of the course, counted as if the map did not
+## repeat.
+func _cell_of(at: Vector2i) -> Vector2i:
+	return Vector2i(floori(at.x / float(CourseData.CELL)), floori(at.y / float(CourseData.CELL)))
+
+
+## The cells from where picking up started to `to`.
+func picked_rect(to: Vector2i) -> Rect2i:
+	var corner := Vector2i(mini(_pick_from.x, to.x), mini(_pick_from.y, to.y))
+	var size := (_pick_from - to).abs() + Vector2i.ONE
+	return Rect2i(corner, Vector2i(mini(size.x, data.across), mini(size.y, data.down)))
+
+
+## What a click puts down: rows of cell numbers.
+func stamp_cells() -> Array:
+	return stamp if not stamp.is_empty() else [[chosen_cell]]
+
+
+func _pick_up(rect: Rect2i) -> void:
+	var rows := []
+	for row in rect.size.y:
+		var cells := []
+		for column in rect.size.x:
+			var at := (rect.position + Vector2i(column, row)) * CourseData.CELL
+			cells.append(data.map[data.place_at(at)])
+		rows.append(cells)
+	if rect.size == Vector2i.ONE:
+		stamp = []
+		chosen_cell = rows[0][0]
+		_choose_in(_cell_list, chosen_cell)
+		return
+	stamp = rows
+	_cell_list.deselect_all()
+	_help.text = "Picked up %d by %d cells. Left-click to put them down; choose a cell in the list to go back to one." % [
+		rect.size.x, rect.size.y]
+
+
+func _put_stamp(at: Vector2i) -> void:
+	var corner := _cell_of(at)
+	var cells := stamp_cells()
+	for row in cells.size():
+		for column in cells[row].size():
+			var spot := (corner + Vector2i(column, row)) * CourseData.CELL
+			_put_cell(data.place_at(spot), cells[row][column])
+
+
+func _put_cell(place: int, chosen: int) -> void:
+	if data.map[place] == chosen:
 		return
 	_remember("map")
 	_remember("scenery")
@@ -831,10 +945,10 @@ func _put_cell(place: int) -> void:
 	for thing in data.scenery:
 		if thing.x >> 8 != corner.x >> 8 or thing.y >> 8 != corner.y >> 8:
 			kept.append(thing)
-	kept.append_array(data.cell_scenery_at(chosen_cell, place))
+	kept.append_array(data.cell_scenery_at(chosen, place))
 	data.scenery = kept
 	selected_thing = -1
-	data.map[place] = chosen_cell
+	data.map[place] = chosen
 	_changed()
 
 
@@ -870,8 +984,6 @@ func _paint_codes(at: Vector2i) -> void:
 	for down in brush:
 		for across in brush:
 			var spot := (first + Vector2i(across, down)) * 8
-			if spot.y < 0 or spot.y >= data.down * CourseData.CELL:
-				continue
 			var cell := data.map[data.place_at(spot)]
 			var key := "codes:%d" % cell
 			_remember(key)
@@ -890,14 +1002,33 @@ func _paint_codes(at: Vector2i) -> void:
 
 func _thing_at(at: Vector2i) -> int:
 	var best := -1
-	var width := data.across * CourseData.CELL
+	var period := Vector2(data.across, data.down) * CourseData.CELL
+	var spot := Vector2(wrapped(at))
 	for index in data.scenery.size():
 		var rect := thing_rect(data.scenery[index])
-		for shift: int in [-width, 0, width]:
-			if Rect2(rect.position + Vector2(shift, 0), rect.size).has_point(Vector2(at)):
-				if best < 0 or data.scenery[index].y > data.scenery[best].y:
-					best = index
+		for down: int in [-1, 0, 1]:
+			for across: int in [-1, 0, 1]:
+				if Rect2(rect.position + Vector2(across, down) * period, rect.size).has_point(spot):
+					if best < 0 or data.scenery[index].y > data.scenery[best].y:
+						best = index
 	return best
+
+
+## A position of the course on the map itself, which repeats both ways.
+func wrapped(at: Vector2i) -> Vector2i:
+	return Vector2i(posmod(at.x, data.across * CourseData.CELL), posmod(at.y, data.down * CourseData.CELL))
+
+
+## A difference between positions, as the shortest way round the map.
+func wrapped_difference(difference: Vector2i) -> Vector2i:
+	var period := Vector2i(data.across, data.down) * CourseData.CELL
+	return Vector2i(posmod(difference.x + period.x / 2, period.x) - period.x / 2,
+			posmod(difference.y + period.y / 2, period.y) - period.y / 2)
+
+
+## The game keeps positions in 16 bits.
+static func _clamp16(at: Vector2i) -> Vector2i:
+	return Vector2i(clampi(at.x, -0x8000, 0x7FFF), clampi(at.y, -0x8000, 0x7FFF))
 
 
 func _press_route(at: Vector2i, button: int) -> void:
@@ -922,7 +1053,8 @@ func _press_route(at: Vector2i, button: int) -> void:
 			return
 	if found < 0:
 		var speed := data.waypoints[selected_point][4] if selected_point >= 0 else 2000
-		var point := PackedInt32Array([at.x, at.y, NEW_BOX.x, NEW_BOX.y, speed])
+		var spot := _clamp16(at)
+		var point := PackedInt32Array([spot.x, spot.y, NEW_BOX.x, NEW_BOX.y, speed])
 		found = selected_point + 1 if selected_point >= 0 else data.waypoints.size()
 		data.waypoints.insert(found, point)
 		_changed()
@@ -940,8 +1072,9 @@ func _drag_route(at: Vector2i) -> void:
 		point[2] = maxi(absi(at.x - point[0]) * 2, 16)
 		point[3] = maxi(absi(at.y - point[1]) * 2, 16)
 	elif _dragging == "point":
-		point[0] = at.x - _grab.x
-		point[1] = at.y - _grab.y
+		var spot := _clamp16(at - _grab)
+		point[0] = spot.x
+		point[1] = spot.y
 	else:
 		return
 	data.waypoints[selected_point] = point
@@ -974,7 +1107,7 @@ func _delete_point() -> void:
 
 func _line_at(at: Vector2i) -> int:
 	for index in data.progress.size():
-		if absf((at.y - int(data.progress[index])) * _view.zoom) <= 6.0:
+		if absf((at.y - GameRoutines.wrap16(int(data.progress[index]))) * _view.zoom) <= 6.0:
 			return index
 	return -1
 
@@ -1117,6 +1250,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_choose_tool(key.keycode - KEY_1)
 	elif key.keycode == KEY_G:
 		_codes_check.button_pressed = not show_codes
+	elif key.keycode == KEY_F:
+		_follow_check.button_pressed = not _follow_check.button_pressed
+	elif key.keycode == KEY_HOME:
+		_view.back_to_road()
+	elif key.keycode == KEY_BRACKETLEFT or key.keycode == KEY_BRACKETRIGHT:
+		view_wheel(-1 if key.keycode == KEY_BRACKETLEFT else 1)
 	elif key.keycode == KEY_DELETE or key.keycode == KEY_BACKSPACE:
 		if tool == Tool.SCENERY and selected_thing >= 0:
 			_remember_now("scenery")
