@@ -263,7 +263,7 @@ func save(folder: String, changed_codes: Dictionary = {}, with_scenery := true) 
 	config.set_value("course", "music", music)
 	if scale != 1:
 		config.set_value("graphics", "scale", scale)
-	config.save(folder.path_join(Mods.FILE))
+	SafeFile.save_config(config, folder.path_join(Mods.FILE))
 
 	_write(course.path_join("map.txt"), _grid_text(map, "%3d"))
 	_write(course.path_join("signs.txt"), _grid_text(signs, "%2d"))
@@ -277,10 +277,10 @@ func save(folder: String, changed_codes: Dictionary = {}, with_scenery := true) 
 			lines.append("%d %d %d" % [thing.x, thing.y, thing.z])
 		_write(course.path_join("scenery.txt"), "\n".join(lines))
 	for cell: int in changed_codes:
-		codes_image(cell).save_png(course.path_join("codes/%d.png" % cell))
+		SafeFile.save_png(codes_image(cell), course.path_join("codes/%d.png" % cell))
 	for cell: int in painted:
 		if not FileAccess.file_exists(course.path_join("cells/%d.png" % cell)) or changed_codes.has(cell):
-			(painted[cell] as Image).save_png(course.path_join("cells/%d.png" % cell))
+			SafeFile.save_png(painted[cell] as Image, course.path_join("cells/%d.png" % cell))
 	# a cell made and then given up (undone) leaves no picture behind
 	for cell: int in made:
 		if not painted.has(cell) and FileAccess.file_exists(course.path_join("cells/%d.png" % cell)):
@@ -484,4 +484,4 @@ func _grid_text(values: PackedInt32Array, format: String) -> String:
 
 
 static func _write(path: String, text: String) -> void:
-	FileAccess.open(path, FileAccess.WRITE).store_string(text + "\n")
+	SafeFile.write_text(path, text + "\n")

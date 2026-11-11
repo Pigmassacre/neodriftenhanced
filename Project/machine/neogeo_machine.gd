@@ -232,6 +232,8 @@ func hook_block(address: int, callback: Callable) -> void:
 func release() -> void:
 	_table = {}
 	native = Callable()
+	for group: GameRoutines in get_meta(&"hand_written", []):
+		group.release()
 	remove_meta(&"hand_written")
 
 

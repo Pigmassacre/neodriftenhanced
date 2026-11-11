@@ -67,6 +67,9 @@ extends Node2D
 ##   --mod-folder=PATH          look for mods in that folder too
 ##   --course-mod=ID            with --stage, drive that mod's course (mods/mod_courses.gd)
 ##   --dump-graphics=FOLDER     save every picture the game shows, for making mods
+##   --bot SEED, --masher SEED  play by itself through the menus and races (testing/run_bot.gd)
+##                              or press buttons at random (testing/button_masher.gd), to find
+##                              bugs; Tools/release_check.py runs them
 
 ## The hardware refreshes slightly slower than 60 Hz.
 const FRAME_TIME := 1.0 / 59.185606
@@ -387,6 +390,10 @@ func _ready() -> void:
 			_enter_menu()
 			_menu.open(menu_page if menu_page != "" else "main")
 	_refresh()
+	if RunBot.is_active:
+		add_child(RunBot.new())
+	elif ButtonMasher.is_active:
+		add_child(ButtonMasher.new())
 
 
 ## Makes the machine anew, in place of the one there was: as a board just
@@ -675,16 +682,25 @@ func _keep_best_times() -> void:
 	var times := Decomp.kept_times(machine)
 	if times == _times_kept:
 		return
-	var file := FileAccess.open(_best_times(), FileAccess.WRITE)
-	if file != null:
-		file.store_buffer(times)
+	if SafeFile.write_bytes(_best_times(), times) == OK:
 		_times_kept = times
 
 
-func _quit() -> void:
+func _quit(exit_code := 0) -> void:
 	_keep_best_times()
 	_save_recording()
-	get_tree().quit()
+	get_tree().quit(exit_code)
+
+
+## What the player is at, for the testing scripts (testing/): "playing",
+## "menu", "starting", "paused" or "editing".
+func testing_state() -> String:
+	return ["playing", "menu", "starting", "paused", "editing"][_state]
+
+
+## Whether the main menu's picture has appeared, for the testing scripts.
+func testing_menu_ready() -> bool:
+	return _state != IN_MENU or (_menu_frames == 0 and _menu_shown >= 1.0)
 
 
 ## What the coin slot and the buttons are to be while a game is got ready,
