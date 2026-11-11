@@ -91,7 +91,8 @@ func _try() -> void:
 
 
 func _start() -> void:
-	get_tree().change_scene_to_file("res://game.tscn")
+	# deferred: from _ready, the tree is still busy adding this scene
+	get_tree().change_scene_to_file.call_deferred("res://game.tscn")
 
 
 ## The folder the game is in, where the player is asked to put their ROMs.
