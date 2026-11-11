@@ -679,15 +679,24 @@ func _named_row(text: String, right: Control = null) -> Button:
 
 func _item(text: String, chosen: Callable) -> Button:
 	var button := _named_row(text)
-	button.pressed.connect(chosen)
+	button.pressed.connect(_when_open(chosen))
 	return button
+
+
+## `chosen`, called only while the menu is open: a row's button that loses
+## the focus while a key or button holds it down, as the menu is shut by
+## another, says it was pressed then.
+func _when_open(chosen: Callable) -> Callable:
+	return func() -> void:
+		if is_open():
+			chosen.call()
 
 
 ## A row with a name at the left and something at the right. `step` is
 ## called with -1 or 1 for left and right, and with 1 when it is chosen.
 func _row(text: String, right: Control, step: Callable) -> Button:
 	var button := _named_row(text, right)
-	button.pressed.connect(step.bind(1))
+	button.pressed.connect(_when_open(step.bind(1)))
 	button.gui_input.connect(func(event: InputEvent) -> void:
 		for direction: int in [-1, 1]:
 			if event.is_action_pressed("ui_left" if direction < 0 else "ui_right", true):
@@ -864,7 +873,7 @@ func _controls() -> void:
 		for place in Settings.PLACES:
 			var button := _small_bar(Settings.place_name(settings.controls[action][place]), height)
 			button.custom_minimum_size.x = 25.0 * _unit
-			button.pressed.connect(_await.bind(action, place, button))
+			button.pressed.connect(_when_open(_await.bind(action, place, button)))
 			grid.add_child(button)
 	_add(grid, grid.get_combined_minimum_size().y / _unit)
 	var below := HBoxContainer.new()
@@ -872,7 +881,7 @@ func _controls() -> void:
 	for entry: Array in [["Back", _back], ["Reset to default", _reset_controls]]:
 		var button := _small_bar(entry[0], height + 0.8)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.pressed.connect(entry[1])
+		button.pressed.connect(_when_open(entry[1]))
 		if entry[0] == "Back":
 			button.set_meta("about", ABOUT["Back"])
 		below.add_child(button)

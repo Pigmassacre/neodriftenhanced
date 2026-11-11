@@ -35,6 +35,13 @@ func sibling(script: GDScript) -> GameRoutines:
 	return _siblings[script]
 
 
+## Lets go of the machine and the other groups, which refer back to this one
+## (NeoGeoMachine.release).
+func release() -> void:
+	_siblings = {}
+	m = null
+
+
 ## Address of each routine replaced, and the method that replaces it.
 func routines() -> Dictionary:
 	return {}

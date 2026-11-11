@@ -44,8 +44,9 @@ var _address := [0, 0]
 ## [port "A"/"B", register, value, sound CPU time in cycles]
 var write_log: Array = []
 var logging := false
-## No audio output (headless tools).
-var silent := false
+## No audio output: for headless tools, and any headless run, where nothing
+## plays it (and a playing generator outlives the engine's audio).
+var silent := DisplayServer.get_name() == "headless"
 ## Keep the sound from the audio output (it is still rendered and captured).
 var muted := false
 ## Times the audio output ran out of sound, and frames of sound dropped

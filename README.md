@@ -55,6 +55,52 @@ own `neodrift.zip` and `neogeo.zip` (MAME's sets) beside it, and makes what
 it needs from them on the first start. `release.sh --dry-run` builds
 without publishing, `--draft` leaves the release a draft.
 
+## Release checks
+
+```sh
+python3 Tools/release_check.py --quick      # before a commit
+python3 Tools/release_check.py              # before a release
+```
+
+This battle-tests the game headless, many runs side by side, each in a
+throwaway user data directory (your own options and best times are never
+touched), and exits non-zero if anything failed:
+
+- **bots**: the run bot (`-- --bot SEED [--games N] [--minutes M]`,
+  `Project/testing/run_bot.gd`) plays whole games through the real menus:
+  Arcade or a Freeplay stage, the options changed at random, the pause
+  menu. Its autopilot steers for the waypoints the other cars follow. It
+  checks that the machine keeps running, the menus open and shut when
+  they should, no screen lasts for ever, and after each game that the best
+  times on disk are those the game holds.
+- **masher**: the button masher (`-- --masher SEED [--seconds N]`,
+  `Project/testing/button_masher.gd`) presses random keys, pad buttons,
+  clicks and drags from the first frame, through every menu and the course
+  editor, and now and then loses window focus, resizes the window,
+  unplugs the pad or takes a long frame. It fails when the game stops or
+  hangs, or a menu is left with nothing focused.
+- **saves**: the game started on a broken `settings.cfg`, `best_times.bin`
+  or mod (empty, cut short, garbage, wrong types), then played and mashed.
+- **mods**: the bot and the masher with `mod_examples/` installed.
+- **soak**: many games in one run; object and resource counts must not
+  keep going up.
+- **kills** and **closes**: the game killed at random moments and just as
+  it writes a file, after which the files must still read; and the window
+  closed at a random frame, after which it must quit cleanly.
+- **lint**: no easing by `rate * delta`, no player file written in place
+  (a kill leaves it half written), no quitting past `game.gd`'s `_quit()`.
+- **oldsaves**: the files earlier releases left in `tests/saves/RELEASE/`
+  must still read, unchanged. Keep a release's with
+  `python3 Tools/release_check.py --keep-saves RELEASE` and commit them.
+
+A run fails on a crash, a hang, its own failure, or any error or warning
+it prints, leaks at exit included. Each failure comes with the command
+that reproduces it, and its user data is kept in
+`Builds/ReleaseCheck/DATE_TIME/`. `--only bots,masher` picks checks,
+`--exported` tests the Linux build `Tools/build.py linux` made instead of
+the project, and `--window` runs the masher in a real window (it takes
+over the screen).
+
 ## Mods
 
 Mods replace pictures (in full colour, up to four times as fine), sounds and

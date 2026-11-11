@@ -129,7 +129,7 @@ func save_file() -> void:
 			file.set_value(section, property, get(property))
 	for action in ACTIONS:
 		file.set_value("controls", action, controls[action])
-	file.save(path)
+	SafeFile.save_config(file, path)
 
 
 ## Makes the input actions what `controls` says.
@@ -158,16 +158,25 @@ static func add_pad_to_menus() -> void:
 
 static func event_of(place: String) -> InputEvent:
 	var parts := place.split(":")
+	# a place from a hand-edited file may be anything: one that is no key,
+	# button or stick is nothing
+	if parts.size() < 2 or not parts[1].is_valid_int() or int(parts[1]) <= 0 and parts[0] == "key" \
+			or int(parts[1]) < 0:
+		return null
 	match parts[0]:
 		"key":
 			var key := InputEventKey.new()
 			key.physical_keycode = int(parts[1]) as Key
 			return key
 		"button":
+			if int(parts[1]) >= JOY_BUTTON_MAX:
+				return null
 			var button := InputEventJoypadButton.new()
 			button.button_index = int(parts[1]) as JoyButton
 			return button
 		"axis":
+			if parts.size() != 3 or not parts[2] in ["-", "+"] or int(parts[1]) >= JOY_AXIS_MAX:
+				return null
 			var motion := InputEventJoypadMotion.new()
 			motion.axis = int(parts[1]) as JoyAxis
 			motion.axis_value = -1.0 if parts[2] == "-" else 1.0
@@ -192,10 +201,15 @@ static func place_of(event: InputEvent) -> String:
 
 ## What the menu calls a place.
 static func place_name(place: String) -> String:
+	if event_of(place) == null:
+		return "-"
 	var parts := place.split(":", true, 1)
 	match parts[0]:
 		"key":
-			var code := DisplayServer.keyboard_get_keycode_from_physical(int(parts[1]) as Key)
+			var key := int(parts[1]) as Key
+			# the headless display server has no keyboard layout to ask
+			var code := key if DisplayServer.get_name() == "headless" \
+					else DisplayServer.keyboard_get_keycode_from_physical(key)
 			return OS.get_keycode_string(code)
 		"button":
 			var index := int(parts[1])
