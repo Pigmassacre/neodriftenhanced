@@ -86,7 +86,7 @@ static func from_mod(machine: NeoGeoMachine, folder: String) -> CourseData:
 func _read_game(machine: NeoGeoMachine, course: int) -> void:
 	_machine = machine
 	base = course
-	name = "Stage %d, changed" % course if course > 0 else "Practice, changed"
+	name = "Custom stage %d" % course if course > 0 else "Custom practice stage"
 	music = course
 	_name_at_load = name
 	_record = machine.r32(ModCourses.COURSES + course * 4)

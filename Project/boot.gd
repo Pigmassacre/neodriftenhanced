@@ -46,7 +46,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if _thread != null:
 		if _thread.is_alive():
-			_label.text = "Warming up the engine!\n\nGetting the pictures ready from your ROMs: %d%%" \
+			_label.text = "Warming up the engine!\n\nExtracting graphics from your ROMs: %d%%" \
 					% roundi(_progress * 100.0)
 			return
 		var ok: bool = _thread.wait_to_finish()
@@ -54,7 +54,7 @@ func _process(delta: float) -> void:
 		if ok:
 			_start()
 		else:
-			_label.text = "Could not write the game's pictures to\n%s" % _data_dir()
+			_label.text = "Could not save the graphics to\n%s" % _data_dir()
 		return
 	if not _missing.is_empty():
 		_waited += delta
@@ -79,7 +79,7 @@ func _try() -> void:
 		if _missing != was_missing:
 			print("ROMs missing (%s): put them in %s" % [", ".join(_missing), _beside_game()])
 		_label.text =("Insert ROMs to play!\n\nNeo Drift Out Enhanced runs on your own copy of the game. "
-				+ "Put MAME's neodrift.zip and neogeo.zip (or folders of the same names) in\n\n%s\n\n"
+				+ "Put MAME's neodrift.zip and neogeo.zip (or folders with those names) in\n\n%s\n\n"
 				+ "and the race is on. Still missing: %s\n\nEnter opens the folder, Esc quits.") \
 				% [_beside_game(), ", ".join(_missing)]
 		return

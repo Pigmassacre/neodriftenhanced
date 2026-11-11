@@ -86,23 +86,24 @@ const ABOUT := {
 	"Resume": "Back on the gas!",
 	"Quit to main menu": "Retire from this race.",
 	"Practice stage": "Warm up those tyres!",
-	"Picture": "Window, scaling, wide screen and CRT.",
+	"Picture": "Window, scaling, widescreen and CRT.",
 	"Sound": "Turn it up!",
 	"Controls": "Remap keys and pad buttons.",
-	"Game": "HUD, map and continues.",
+	"Game": "Difficulty, HUD, map and continues.",
 	"Full screen": "Go full screen!",
 	"Window size": "How big the window is.",
 	"V-Sync": "No screen tearing.",
-	"Wide picture": "See more of the course on wide screens.",
-	"Whole-number scaling": "Pixel-perfect: every pixel the same size.",
+	"Widescreen": "See more of the course on wide screens.",
+	"Integer scaling": "Pixel-perfect: every pixel the same size.",
 	"CRT": "Curved glass and scanlines, straight out of the arcade!",
 	"CRT curvature": "How much the glass bulges.",
 	"Transparent shadows": "See-through shadows instead of the arcade's flicker.",
 	"Volume": "Master volume.",
 	"Music": "Music volume.",
 	"Effects": "Engines, skids and crashes!",
+	"Difficulty": "Higher levels give less time at checkpoints.",
 	"HUD": "New: sharp and modern. Original: the arcade's own.",
-	"Map of the course": "Show the course map while you race.",
+	"Course map": "Show the course map while you race.",
 	"Free continues": "Keep going, no coin needed!",
 	"Back": "Go back.",
 }
@@ -335,11 +336,11 @@ func _show(arriving := true) -> void:
 			_page_about = "Your courses are saved in %s" % ProjectSettings.globalize_path("user://mods")
 			for mod in Mods.find_all():
 				if ModCourses.is_course(mod):
-					var button := _item("Change: " + ModCourses.name_of(mod),
+					var button := _item("Edit: " + ModCourses.name_of(mod),
 							func() -> void: editor_chosen.emit(mod.path, ModCourses.base_of(mod)))
 					button.set_meta("about", "Back to work on %s!" % mod.name)
 			for stage in STAGES:
-				var button := _item("New, from the practice stage" if stage == 0 else "New, from stage %d" % stage,
+				var button := _item("New from practice stage" if stage == 0 else "New from stage %d" % stage,
 						func() -> void: editor_chosen.emit("", stage))
 				button.set_meta("about", "Start a new course from %s!" %
 						("the practice stage" if stage == 0 else "stage %d" % stage))
@@ -378,8 +379,8 @@ func _show(arriving := true) -> void:
 			_switch("Full screen", "picture", "full_screen")
 			_window_size()
 			_switch("V-Sync", "picture", "vsync")
-			_switch("Wide picture", "picture", "wide")
-			_switch("Whole-number scaling", "picture", "whole_pixels")
+			_switch("Widescreen", "picture", "wide")
+			_switch("Integer scaling", "picture", "whole_pixels")
 			_switch("CRT", "picture", "crt")
 			_volume("CRT curvature", "crt_curve", "picture")
 			_switch("Transparent shadows", "picture", "translucency")
@@ -396,8 +397,9 @@ func _show(arriving := true) -> void:
 			_title.text = "Game"
 			width = 74.0
 			keys = changing
+			_choice("Difficulty", "game", "difficulty", Settings.DIFFICULTY_NAMES)
 			_choice("HUD", "game", "hud", Settings.HUD_NAMES)
-			_switch("Map of the course", "game", "map")
+			_switch("Course map", "game", "map")
 			_switch("Free continues", "game", "free_continues")
 			_item("Back", _back)
 		"mods":
@@ -408,7 +410,7 @@ func _show(arriving := true) -> void:
 			_item("Back", _back)
 		"controls":
 			_title.text = "Controls"
-			keys = "Enter  Change      Delete  Empty      Esc  Back"
+			keys = "Enter  Change      Delete  Clear      Esc  Back"
 			_page_about = "Pick a slot, then press the new key or button! Esc to cancel."
 	var names: Array[String] = []
 	for open_page: Array in _pages:
@@ -459,8 +461,6 @@ func _place_header(hero: bool) -> void:
 	_watermark.add_theme_constant_override("outline_size", maxi(int(0.35 * _unit), 2))
 	_watermark.size = _watermark.get_minimum_size()
 	_watermark.position = Vector2(left * 0.4, size.y - FOOTER * _unit - _watermark.size.y * 0.8)
-	_next_y = 0.0
-	_row_number = 0
 
 
 ## The panel's edge moves to just right of the rows.
@@ -515,6 +515,10 @@ func _clear_rows() -> void:
 		_list.remove_child(row)
 		row.queue_free()
 	_arrivals.clear()
+	# the next row goes at the top again: a page's rows are put in before
+	# its header (the controls' after), so this is not the header's to do
+	_next_y = 0.0
+	_row_number = 0
 
 
 ## Puts `page` on top of the one shown.
@@ -865,7 +869,7 @@ func _controls() -> void:
 	_add(grid, grid.get_combined_minimum_size().y / _unit)
 	var below := HBoxContainer.new()
 	below.add_theme_constant_override("separation", int(1.2 * _unit))
-	for entry: Array in [["Back", _back], ["As they were at first", _reset_controls]]:
+	for entry: Array in [["Back", _back], ["Reset to default", _reset_controls]]:
 		var button := _small_bar(entry[0], height + 0.8)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.pressed.connect(entry[1])

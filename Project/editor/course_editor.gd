@@ -33,12 +33,12 @@ const CourseView := preload("res://editor/course_view.gd")
 enum Tool {CELLS, GROUND, SCENERY, ROUTE, START, SIGNS}
 const TOOL_NAMES := ["Cells", "Ground", "Scenery", "Route", "Start", "Signs"]
 const TOOL_HELP := [
-	"Left: put the chosen cell here (with its scenery).  Right: choose the cell here.",
-	"Left: paint the chosen code.  Right: choose the code here.  Every place with this cell changes; give it a cell of its own first to change one place alone.",
-	"Left: put the chosen thing, or pick one up and move it.  Right: take it away.",
-	"Left: choose a box and move it (its corner sizes it), or add one after the chosen.  Right: take a box away.",
-	"Left: put the start here.  Shift and left: face the car towards here.  Drag a line to move it.",
-	"Left: put the chosen sign here.  Right: take it away.",
+	"Left-click: place the selected cell (with its scenery).  Right-click: pick the cell under the cursor.",
+	"Left-click: paint the selected code.  Right-click: pick the code under the cursor.  This changes every copy of the cell; make it unique first to change just one spot.",
+	"Left-click: place the selected object, or drag one to move it.  Right-click: delete it.",
+	"Left-click: select and drag a box (drag its corner to resize), or add a box after the selected one.  Right-click: delete a box.",
+	"Left-click: set the start.  Shift+left-click: turn the car to face that point.  Drag a line to move it.",
+	"Left-click: place the selected sign.  Right-click: delete it.",
 ]
 const CODES_SHOWN := 0.45
 const PANEL_WIDTH := 340
@@ -234,13 +234,13 @@ func _build() -> void:
 	_name.text_changed.connect(func(text: String) -> void:
 		data.name = text
 		_dirty = true)
-	_time = _field(side, "Seconds: at the start, then at each checkpoint", LineEdit.new())
+	_time = _field(side, "Time in seconds (start, then each checkpoint)", LineEdit.new())
 	_time.text_submitted.connect(_set_time.unbind(1))
 	_time.focus_exited.connect(_set_time)
 	var row := HBoxContainer.new()
 	side.add_child(row)
 	var music_label := Label.new()
-	music_label.text = "Music of"
+	music_label.text = "Music"
 	row.add_child(music_label)
 	_music = OptionButton.new()
 	for course in ModCourses.COURSE_COUNT:
@@ -251,7 +251,7 @@ func _build() -> void:
 	row.add_child(_music)
 	_arcade = CheckBox.new()
 	_arcade.text = "In Arcade"
-	_arcade.tooltip_text = "Driven in Arcade in place of the course it is made from."
+	_arcade.tooltip_text = "Replaces the course it is based on in Arcade."
 	_arcade.toggled.connect(func(on: bool) -> void:
 		data.arcade = on
 		_dirty = true)
@@ -270,7 +270,7 @@ func _build() -> void:
 	_button(drive, "Close", _close)
 
 	_confirm = ConfirmationDialog.new()
-	_confirm.dialog_text = "Close without saving the changes?"
+	_confirm.dialog_text = "Close without saving?"
 	_confirm.ok_button_text = "Close"
 	_confirm.confirmed.connect(func() -> void: closed.emit())
 	add_child(_confirm)
@@ -378,12 +378,12 @@ func _list(parent: Control, icons: bool) -> ItemList:
 # --- the palettes ------------------------------------------------------------
 
 func _build_cells(palette: VBoxContainer) -> void:
-	_note(palette, "Cells of the course. Those on the map come first.")
+	_note(palette, "This course's cells. Those used on the map come first.")
 	_cell_list = _list(palette, true)
 	_cell_list.item_selected.connect(func(index: int) -> void:
 		chosen_cell = _cell_list.get_item_metadata(index))
-	_button(palette, "Give the place a cell of its own", _own_cell)
-	_note(palette, "A cell of its own is a copy that only that place shows: its ground codes can then be painted alone, and its picture (course/cells/NUMBER.png in the mod's folder) painted over in any paint program.")
+	_button(palette, "Make cell unique", _own_cell)
+	_note(palette, "A unique cell is a copy used in only one spot. You can paint its ground codes separately, and edit its picture (course/cells/NUMBER.png in the mod folder) in any paint program.")
 	_fill_cells()
 
 
@@ -404,13 +404,13 @@ func _fill_cells() -> void:
 	for cell in order:
 		var index := _cell_list.add_item(str(cell), cell_texture(cell))
 		_cell_list.set_item_metadata(index, cell)
-		_cell_list.set_item_tooltip(index, "Cell %d, at %d places" % [cell, data.uses_of(cell)])
+		_cell_list.set_item_tooltip(index, "Cell %d, used %d times" % [cell, data.uses_of(cell)])
 		if cell == chosen_cell:
 			_cell_list.select(index)
 
 
 func _build_ground(palette: VBoxContainer) -> void:
-	_note(palette, "What a car finds on the ground. Gates are two strips, the first before the second; driving through both passes a checkpoint.")
+	_note(palette, "Ground types. A checkpoint gate is two strips: drive through the first, then the second.")
 	var row := HBoxContainer.new()
 	palette.add_child(row)
 	var label := Label.new()
@@ -442,7 +442,7 @@ func _build_ground(palette: VBoxContainer) -> void:
 
 
 func _build_scenery(palette: VBoxContainer) -> void:
-	_note(palette, "Things to put beside the road. Those of this course come first.")
+	_note(palette, "Roadside objects. This course's own come first.")
 	_kind_list = _list(palette, true)
 	var order: Array[int] = []
 	var seen := {}
@@ -462,11 +462,11 @@ func _build_scenery(palette: VBoxContainer) -> void:
 	chosen_kind = order[0] if not order.is_empty() else 1
 	_kind_list.item_selected.connect(func(index: int) -> void:
 		chosen_kind = _kind_list.get_item_metadata(index))
-	_note(palette, "Some things are other courses' and look right only in their colours.")
+	_note(palette, "Objects from other courses may show the wrong colours.")
 
 
 func _build_route(palette: VBoxContainer) -> void:
-	_note(palette, "The other cars drive from box to box, in order, slowing to each box's speed on the way. A box is reached when a car is in it.")
+	_note(palette, "Rival cars drive through the boxes in order, slowing to each box's speed. A car reaches a box when it is inside it.")
 	var grid := GridContainer.new()
 	grid.columns = 2
 	palette.add_child(grid)
@@ -490,18 +490,18 @@ func _build_route(palette: VBoxContainer) -> void:
 		_point_fields.append(field)
 	var buttons := HBoxContainer.new()
 	palette.add_child(buttons)
-	_button(buttons, "Earlier", _move_point.bind(-1))
-	_button(buttons, "Later", _move_point.bind(1))
-	_button(buttons, "Take away", _delete_point)
-	_rivals = _field(palette, "The box each of the other cars starts for", LineEdit.new())
+	_button(buttons, "Move up", _move_point.bind(-1))
+	_button(buttons, "Move down", _move_point.bind(1))
+	_button(buttons, "Delete", _delete_point)
+	_rivals = _field(palette, "First box for each rival car", LineEdit.new())
 	_rivals.text_submitted.connect(_set_rivals.unbind(1))
 	_rivals.focus_exited.connect(_set_rivals)
 	palette.add_child(_spacer())
 
 
 func _build_start(palette: VBoxContainer) -> void:
-	_note(palette, "The car starts at the dot, facing the arrow; the other cars start beside it. The lines are what the bar at the side of the race measures: the start, each checkpoint and the finish. The checkpoints themselves are the gates on the ground.")
-	_facing = _field(palette, "Facing, in degrees: 0 is right, 90 down the course, 270 up", SpinBox.new())
+	_note(palette, "Your car starts at the dot, facing the arrow, with the rivals beside it. The lines mark the start, each checkpoint and the finish on the progress bar. The checkpoints themselves are the gates on the ground.")
+	_facing = _field(palette, "Direction in degrees (0 right, 90 down, 270 up)", SpinBox.new())
 	_facing.min_value = 0
 	_facing.max_value = 360
 	_facing.step = 0.01
@@ -519,7 +519,7 @@ func _build_start(palette: VBoxContainer) -> void:
 
 
 func _build_signs(palette: VBoxContainer) -> void:
-	_note(palette, "A sign shows when the car comes into a place marked with it, and not again until it has been in a place with another.")
+	_note(palette, "A sign shows when the car enters a spot marked with it, and not again until the car has passed a different sign.")
 	_sign_list = _list(palette, false)
 	for sign in SIGNS:
 		var index := _sign_list.add_item("Sign %d" % sign if sign > 0 else "None")
@@ -840,7 +840,7 @@ func _put_cell(place: int) -> void:
 
 func _own_cell() -> void:
 	if _last_place < 0:
-		_help.text = "Click a place on the map first."
+		_help.text = "Click a spot on the map first."
 		return
 	_step = {}
 	_remember("map")
@@ -855,7 +855,7 @@ func _own_cell() -> void:
 	view_released(Vector2i.ZERO, 0)
 	chosen_cell = cell
 	_fill_cells()
-	_help.text = "Place %d has cell %d of its own now. Its picture is saved as course/cells/%d.png." % [_last_place, cell, cell]
+	_help.text = "Spot %d now has its own cell, %d. Its picture is saved as course/cells/%d.png." % [_last_place, cell, cell]
 
 
 func _code_at(at: Vector2i) -> int:

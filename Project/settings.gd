@@ -35,13 +35,19 @@ const HUD_NEW := 0
 const HUD_ORIGINAL := 1
 const HUD_NONE := 2
 const HUD_NAMES: Array[String] = ["New", "Original", "None"]
+## The board's difficulty levels, as its settings name them; the higher,
+## the less time each checkpoint gives. The arcade's own is level 4.
+const DIFFICULTY_NAMES: Array[String] = [
+	"Level 1", "Level 2", "Level 3", "Level 4", "Level 5", "Level 6", "Level 7", "Level 8",
+]
+const ARCADE_DIFFICULTY := 3
 ## The curve of the CRT's glass at its most (video/crt.gdshader).
 const MOST_CRT_CURVE := 0.15
 ## How far a stick or trigger must be moved to count.
 const STICK_MOVED := 0.5
 const BUTTON_NAMES: Array[String] = [
 	"A", "B", "X", "Y", "Back", "Guide", "Start", "Left stick", "Right stick", "LB", "RB",
-	"Pad up", "Pad down", "Pad left", "Pad right",
+	"D-pad up", "D-pad down", "D-pad left", "D-pad right",
 ]
 const AXIS_NAMES := {
 	"0:-": "Stick left", "0:+": "Stick right", "1:-": "Stick up", "1:+": "Stick down",
@@ -69,6 +75,8 @@ var crt := false
 var crt_curve := 0.3
 var translucency := true
 ## The game.
+## The difficulty: an index into DIFFICULTY_NAMES.
+var difficulty := ARCADE_DIFFICULTY
 var map := true
 ## The HUD of a race: HUD_NEW, HUD_ORIGINAL or HUD_NONE.
 var hud := HUD_NEW
@@ -85,7 +93,7 @@ var mods_off: Array = []
 ## The properties kept in the file, by section.
 const KEPT := {
 	"picture": ["full_screen", "window_size", "vsync", "wide", "whole_pixels", "crt", "crt_curve", "translucency"],
-	"game": ["hud", "map", "free_continues"],
+	"game": ["difficulty", "hud", "map", "free_continues"],
 	"sound": ["volume", "music", "effects"],
 	"mods": ["mods_off"],
 }
