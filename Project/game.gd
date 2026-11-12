@@ -1160,7 +1160,9 @@ func _step() -> void:
 		# the sound CPU's clock is a third of the main CPU's
 		for index in machine.sound_log.size():
 			sound.command(machine.sound_log[index], machine.sound_log_times[index] / 3)
-		_sound_task = WorkerThreadPool.add_task(sound.run_frame)
+		# high priority: the next frame waits for it, so it must not queue
+		# behind low-priority work such as the minimap's
+		_sound_task = WorkerThreadPool.add_task(sound.run_frame, true)
 	machine.sound_log.clear()
 	machine.sound_log_times.clear()
 	frame += 1
