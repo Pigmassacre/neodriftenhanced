@@ -179,7 +179,11 @@ func render(cycles: int) -> int:
 	if use_adpcm:
 		_parts.append(adpcm)
 	if threaded and _parts.size() > 1:
-		var task := WorkerThreadPool.add_group_task(_render_part.bind(count), _parts.size())
+		# High priority: render() runs inside the sound board's own pool task,
+		# and waiting on a group does not let Godot start queued low-priority
+		# tasks. With few threads (one low-priority slot on a 4-thread CPU)
+		# the parts would never start and the game would hang.
+		var task := WorkerThreadPool.add_group_task(_render_part.bind(count), _parts.size(), -1, true)
 		WorkerThreadPool.wait_for_group_task_completion(task)
 	else:
 		for index in _parts.size():
